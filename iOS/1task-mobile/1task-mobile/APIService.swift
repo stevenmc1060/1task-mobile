@@ -1,0 +1,484 @@
+import Foundation
+import Combine
+
+// MARK: - API Configuration
+struct APIConfiguration {
+    // Use the centralized configuration
+    static let baseURL = AppConfiguration.API.baseURL
+    static let timeout = AppConfiguration.API.requestTimeout
+}
+
+// MARK: - API Error Types
+enum APIError: Error, LocalizedError {
+    case invalidURL
+    case noData
+    case decodingError
+    case networkError(Error)
+    case httpError(Int)
+    case unknown
+    
+    var errorDescription: String? {
+        switch self {
+        case .invalidURL:
+            return "Invalid URL"
+        case .noData:
+            return "No data received"
+        case .decodingError:
+            return "Failed to decode response"
+        case .networkError(let error):
+            return "Network error: \(error.localizedDescription)"
+        case .httpError(let statusCode):
+            return "HTTP error: \(statusCode)"
+        case .unknown:
+            return "Unknown error occurred"
+        }
+    }
+}
+
+// MARK: - Request/Response Models for Backend
+struct CreateTaskRequest: Codable {
+    let title: String
+    let description: String?
+    let dueDate: String?
+    let priority: String
+    let status: String
+    let userId: String
+}
+
+struct UpdateTaskRequest: Codable {
+    let title: String?
+    let description: String?
+    let dueDate: String?
+    let priority: String?
+    let status: String?
+}
+
+struct CreateHabitRequest: Codable {
+    let title: String
+    let description: String?
+    let frequency: String
+    let targetCount: Int
+    let tags: [String]
+    let status: String
+    let userId: String
+}
+
+struct UpdateHabitRequest: Codable {
+    let title: String?
+    let description: String?
+    let frequency: String?
+    let targetCount: Int?
+    let tags: [String]?
+    let status: String?
+}
+
+struct CreateYearlyGoalRequest: Codable {
+    let title: String
+    let description: String?
+    let weekStartDate: String?
+    let keyMetrics: [String]
+    let userId: String
+}
+
+struct UpdateYearlyGoalRequest: Codable {
+    let title: String?
+    let description: String?
+    let weekStartDate: String?
+    let keyMetrics: [String]?
+    let progressPercentage: Double?
+    let status: String?
+}
+
+struct CreateProjectRequest: Codable {
+    let title: String
+    let description: String?
+    let status: String
+    let priority: String
+    let startDate: String?
+    let endDate: String?
+    let tags: [String]
+    let userId: String
+}
+
+struct UpdateProjectRequest: Codable {
+    let title: String?
+    let description: String?
+    let status: String?
+    let priority: String?
+    let startDate: String?
+    let endDate: String?
+    let tags: [String]?
+    let progressPercentage: Double?
+}
+
+// MARK: - API Service
+class APIService: ObservableObject {
+    static let shared = APIService()
+    private let session = URLSession.shared
+    private let baseURL = APIConfiguration.baseURL
+    
+    // User ID for API requests - this should be set after login
+    @Published var currentUserId: String = "demo-user"
+    
+    // Authentication token for API requests
+    @Published var authToken: String?
+    
+    private init() {}
+    
+    // MARK: - Helper Methods
+    private func makeRequest(endpoint: String, method: String = "GET", body: Data? = nil) -> URLRequest? {
+        guard let url = URL(string: "\(baseURL)/\(endpoint)") else {
+            return nil
+        }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = method
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = APIConfiguration.timeout
+        
+        // Add authentication token if available
+        if let authToken = authToken {
+            request.setValue("Bearer \(authToken)", forHTTPHeaderField: "Authorization")
+        }
+        
+        if let body = body {
+            request.httpBody = body
+        }
+        
+        return request
+    }
+    
+    // MARK: - Authentication Methods
+    func setAuthToken(_ token: String?) {
+        self.authToken = token
+    }
+    
+    func clearAuthToken() {
+        self.authToken = nil
+    }
+    
+    private func performRequest<T: Codable>(_ request: URLRequest, responseType: T.Type) -> AnyPublisher<T, APIError> {
+        return session.dataTaskPublisher(for: request)
+            .map(\.data)
+            .decode(type: T.self, decoder: JSONDecoder())
+            .mapError { error in
+                if error is DecodingError {
+                    return APIError.decodingError
+                } else {
+                    return APIError.networkError(error)
+                }
+            }
+            .eraseToAnyPublisher()
+    }
+    
+    // MARK: - Health Check
+    func checkHealth() -> AnyPublisher<Bool, APIError> {
+        guard let request = makeRequest(endpoint: "health") else {
+            return Fail(error: APIError.invalidURL).eraseToAnyPublisher()
+        }
+        
+        return session.dataTaskPublisher(for: request)
+            .map { _ in true }
+            .mapError { APIError.networkError($0) }
+            .eraseToAnyPublisher()
+    }
+     // MARK: - Tasks API
+    func getTasks() -> AnyPublisher<[Task], APIError> {
+        guard let request = makeRequest(endpoint: "tasks?user_id=\(currentUserId)") else {
+            return Fail(error: APIError.invalidURL).eraseToAnyPublisher()
+        }
+
+        return performRequest(request, responseType: [Task].self)
+    }
+    
+    func createTask(_ task: Task) -> AnyPublisher<Task, APIError> {
+        let createRequest = CreateTaskRequest(
+            title: task.title,
+            description: task.description,
+            dueDate: task.dueDate?.ISO8601Format(),
+            priority: task.priority.rawValue,
+            status: task.status.rawValue,
+            userId: currentUserId
+        )
+        
+        guard let data = try? JSONEncoder().encode(createRequest),
+              let request = makeRequest(endpoint: "tasks", method: "POST", body: data) else {
+            return Fail(error: APIError.invalidURL).eraseToAnyPublisher()
+        }
+        
+        return performRequest(request, responseType: Task.self)
+    }
+    
+    func updateTask(_ task: Task) -> AnyPublisher<Task, APIError> {
+        let updateRequest = UpdateTaskRequest(
+            title: task.title,
+            description: task.description,
+            dueDate: task.dueDate?.ISO8601Format(),
+            priority: task.priority.rawValue,
+            status: task.status.rawValue
+        )
+        
+        guard let data = try? JSONEncoder().encode(updateRequest),
+              let request = makeRequest(endpoint: "tasks/\(task.id)", method: "PUT", body: data) else {
+            return Fail(error: APIError.invalidURL).eraseToAnyPublisher()
+        }
+        
+        return performRequest(request, responseType: Task.self)
+    }
+    
+    func deleteTask(_ taskId: String) -> AnyPublisher<Bool, APIError> {
+        guard let request = makeRequest(endpoint: "tasks/\(taskId)", method: "DELETE") else {
+            return Fail(error: APIError.invalidURL).eraseToAnyPublisher()
+        }
+        
+        return session.dataTaskPublisher(for: request)
+            .map { response in
+                guard let httpResponse = response.response as? HTTPURLResponse else {
+                    return false
+                }
+                return httpResponse.statusCode == 200 || httpResponse.statusCode == 204
+            }
+            .mapError { APIError.networkError($0) }
+            .eraseToAnyPublisher()
+    }
+    
+    // MARK: - Habits API
+    func getHabits() -> AnyPublisher<[Habit], APIError> {
+        guard let request = makeRequest(endpoint: "habits?user_id=\(currentUserId)") else {
+            return Fail(error: APIError.invalidURL).eraseToAnyPublisher()
+        }
+        
+        return performRequest(request, responseType: [Habit].self)
+    }
+    
+    func createHabit(_ habit: Habit) -> AnyPublisher<Habit, APIError> {
+        let createRequest = CreateHabitRequest(
+            title: habit.title,
+            description: habit.description,
+            frequency: habit.frequency.rawValue,
+            targetCount: habit.targetCount,
+            tags: habit.tags,
+            status: habit.status.rawValue,
+            userId: currentUserId
+        )
+        
+        guard let data = try? JSONEncoder().encode(createRequest),
+              let request = makeRequest(endpoint: "habits", method: "POST", body: data) else {
+            return Fail(error: APIError.invalidURL).eraseToAnyPublisher()
+        }
+        
+        return performRequest(request, responseType: Habit.self)
+    }
+    
+    func updateHabit(_ habit: Habit) -> AnyPublisher<Habit, APIError> {
+        let updateRequest = UpdateHabitRequest(
+            title: habit.title,
+            description: habit.description,
+            frequency: habit.frequency.rawValue,
+            targetCount: habit.targetCount,
+            tags: habit.tags,
+            status: habit.status.rawValue
+        )
+        
+        guard let data = try? JSONEncoder().encode(updateRequest),
+              let request = makeRequest(endpoint: "habits/\(habit.id)", method: "PUT", body: data) else {
+            return Fail(error: APIError.invalidURL).eraseToAnyPublisher()
+        }
+        
+        return performRequest(request, responseType: Habit.self)
+    }
+    
+    func deleteHabit(_ habitId: String) -> AnyPublisher<Bool, APIError> {
+        guard let request = makeRequest(endpoint: "habits/\(habitId)", method: "DELETE") else {
+            return Fail(error: APIError.invalidURL).eraseToAnyPublisher()
+        }
+        
+        return session.dataTaskPublisher(for: request)
+            .map { response in
+                guard let httpResponse = response.response as? HTTPURLResponse else {
+                    return false
+                }
+                return httpResponse.statusCode == 200 || httpResponse.statusCode == 204
+            }
+            .mapError { APIError.networkError($0) }
+            .eraseToAnyPublisher()
+    }
+    
+    // MARK: - Goals API
+    func getYearlyGoals() -> AnyPublisher<[Goal], APIError> {
+        guard let request = makeRequest(endpoint: "yearly-goals?user_id=\(currentUserId)") else {
+            return Fail(error: APIError.invalidURL).eraseToAnyPublisher()
+        }
+        
+        return performRequest(request, responseType: [Goal].self)
+    }
+    
+    func createYearlyGoal(_ goal: Goal) -> AnyPublisher<Goal, APIError> {
+        let dateFormatter = ISO8601DateFormatter()
+        let createRequest = CreateYearlyGoalRequest(
+            title: goal.title,
+            description: goal.description,
+            weekStartDate: dateFormatter.string(from: goal.weekStartDate),
+            keyMetrics: goal.keyMetrics,
+            userId: currentUserId
+        )
+        
+        guard let data = try? JSONEncoder().encode(createRequest),
+              let request = makeRequest(endpoint: "yearly-goals", method: "POST", body: data) else {
+            return Fail(error: APIError.invalidURL).eraseToAnyPublisher()
+        }
+        
+        return performRequest(request, responseType: Goal.self)
+    }
+    
+    func updateYearlyGoal(_ goal: Goal) -> AnyPublisher<Goal, APIError> {
+        let dateFormatter = ISO8601DateFormatter()
+        let updateRequest = UpdateYearlyGoalRequest(
+            title: goal.title,
+            description: goal.description,
+            weekStartDate: dateFormatter.string(from: goal.weekStartDate),
+            keyMetrics: goal.keyMetrics,
+            progressPercentage: goal.progressPercentage,
+            status: goal.status.rawValue
+        )
+        
+        guard let data = try? JSONEncoder().encode(updateRequest),
+              let request = makeRequest(endpoint: "yearly-goals/\(goal.id)", method: "PUT", body: data) else {
+            return Fail(error: APIError.invalidURL).eraseToAnyPublisher()
+        }
+        
+        return performRequest(request, responseType: Goal.self)
+    }
+    
+    func deleteYearlyGoal(_ goalId: String) -> AnyPublisher<Bool, APIError> {
+        guard let request = makeRequest(endpoint: "yearly-goals/\(goalId)", method: "DELETE") else {
+            return Fail(error: APIError.invalidURL).eraseToAnyPublisher()
+        }
+        
+        return session.dataTaskPublisher(for: request)
+            .map { response in
+                guard let httpResponse = response.response as? HTTPURLResponse else {
+                    return false
+                }
+                return httpResponse.statusCode == 200 || httpResponse.statusCode == 204
+            }
+            .mapError { APIError.networkError($0) }
+            .eraseToAnyPublisher()
+    }
+    
+    // MARK: - Projects API
+    func getProjects() -> AnyPublisher<[Project], APIError> {
+        guard let request = makeRequest(endpoint: "projects?user_id=\(currentUserId)") else {
+            return Fail(error: APIError.invalidURL).eraseToAnyPublisher()
+        }
+        
+        return performRequest(request, responseType: [Project].self)
+    }
+    
+    func createProject(_ project: Project) -> AnyPublisher<Project, APIError> {
+        let createRequest = CreateProjectRequest(
+            title: project.title,
+            description: project.description,
+            status: project.status.rawValue,
+            priority: project.priority.rawValue,
+            startDate: project.startDate?.ISO8601Format(),
+            endDate: project.endDate?.ISO8601Format(),
+            tags: project.tags,
+            userId: currentUserId
+        )
+        
+        guard let data = try? JSONEncoder().encode(createRequest),
+              let request = makeRequest(endpoint: "projects", method: "POST", body: data) else {
+            return Fail(error: APIError.invalidURL).eraseToAnyPublisher()
+        }
+        
+        return performRequest(request, responseType: Project.self)
+    }
+    
+    func updateProject(_ project: Project) -> AnyPublisher<Project, APIError> {
+        let updateRequest = UpdateProjectRequest(
+            title: project.title,
+            description: project.description,
+            status: project.status.rawValue,
+            priority: project.priority.rawValue,
+            startDate: project.startDate?.ISO8601Format(),
+            endDate: project.endDate?.ISO8601Format(),
+            tags: project.tags,
+            progressPercentage: project.progressPercentage
+        )
+        
+        guard let data = try? JSONEncoder().encode(updateRequest),
+              let request = makeRequest(endpoint: "projects/\(project.id)", method: "PUT", body: data) else {
+            return Fail(error: APIError.invalidURL).eraseToAnyPublisher()
+        }
+        
+        return performRequest(request, responseType: Project.self)
+    }
+    
+    func deleteProject(_ projectId: String) -> AnyPublisher<Bool, APIError> {
+        guard let request = makeRequest(endpoint: "projects/\(projectId)", method: "DELETE") else {
+            return Fail(error: APIError.invalidURL).eraseToAnyPublisher()
+        }
+        
+        return session.dataTaskPublisher(for: request)
+            .map { response in
+                guard let httpResponse = response.response as? HTTPURLResponse else {
+                    return false
+                }
+                return httpResponse.statusCode == 200 || httpResponse.statusCode == 204
+            }
+            .mapError { APIError.networkError($0) }
+            .eraseToAnyPublisher()
+    }
+    
+    // MARK: - Sync Methods
+    func syncAllData() -> AnyPublisher<Bool, APIError> {
+        let publishers = [
+            getTasks().map { _ in true }.eraseToAnyPublisher(),
+            getHabits().map { _ in true }.eraseToAnyPublisher(),
+            getYearlyGoals().map { _ in true }.eraseToAnyPublisher(),
+            getProjects().map { _ in true }.eraseToAnyPublisher()
+        ]
+        
+        return Publishers.MergeMany(publishers)
+            .collect()
+            .map { results in
+                return results.allSatisfy { $0 }
+            }
+            .eraseToAnyPublisher()
+    }
+}
+
+// MARK: - Date Formatting Extension
+extension Date {
+    func ISO8601Format() -> String {
+        let formatter = ISO8601DateFormatter()
+        return formatter.string(from: self)
+    }
+}
+
+// MARK: - Custom JSONDecoder with Date Handling
+extension JSONDecoder {
+    static let apiDecoder: JSONDecoder = {
+        let decoder = JSONDecoder()
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        decoder.dateDecodingStrategy = .custom { decoder in
+            let container = try decoder.singleValueContainer()
+            let dateString = try container.decode(String.self)
+            
+            if let date = formatter.date(from: dateString) {
+                return date
+            }
+            
+            // Fallback to basic ISO8601 without fractional seconds
+            formatter.formatOptions = [.withInternetDateTime]
+            if let date = formatter.date(from: dateString) {
+                return date
+            }
+            
+            throw DecodingError.dataCorruptedError(in: container, debugDescription: "Cannot decode date string \(dateString)")
+        }
+        return decoder
+    }()
+}

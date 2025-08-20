@@ -1,0 +1,127 @@
+import Foundation
+import Combine
+
+// MARK: - Mock MSAL Types (temporary while fixing MSAL import)
+struct MockMSALAccount {
+    let username: String?
+    let identifier: String
+}
+
+// MARK: - MSAL Authentication Service (TEMPORARY MOCK VERSION)
+// This is a temporary mock to allow development while fixing the MSAL import issue
+class MSALAuthenticationService: ObservableObject {
+    
+    // MARK: - Published Properties
+    @Published var isAuthenticated = false
+    @Published var currentUser: MockMSALAccount?
+    @Published var isLoading = false
+    @Published var errorMessage: String?
+    
+    // MARK: - Configuration (for when real MSAL is working)
+    // Azure AD configuration from web frontend
+    private let kClientID = "24243302-91ba-46a3-bbe2-f946278e5a33"
+    private let kRedirectUri = "msauth.com.yourcompany.onetaskassistant://auth"
+    private let kAuthority = "https://login.microsoftonline.com/25dcc072-a2bf-4e88-876a-b63e6e0d0c3e"
+    
+    private let kScopes: [String] = [
+        "User.Read",
+        "https://graph.microsoft.com/User.Read"
+    ]
+    
+    // MARK: - Initialization
+    init() {
+        checkExistingAuthentication()
+        print("🔧 Using MOCK MSALAuthenticationService - Fix MSAL import to use real authentication")
+    }
+    
+    // MARK: - Authentication Methods (MOCK VERSION)
+    func signIn() {
+        print("🔄 Starting mock MSAL sign-in...")
+        
+        isLoading = true
+        errorMessage = nil
+        
+        // Simulate authentication delay
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            // Mock successful authentication
+            self.currentUser = MockMSALAccount(
+                username: "user@organization.com",
+                identifier: "mock-user-id-12345"
+            )
+            self.isAuthenticated = true
+            self.isLoading = false
+            
+            // Store authentication state
+            UserDefaults.standard.set(true, forKey: "mock_is_authenticated")
+            UserDefaults.standard.set("user@organization.com", forKey: "mock_username")
+            
+            print("✅ Mock MSAL sign-in successful")
+        }
+    }
+    
+    func signOut() {
+        print("🔄 Mock MSAL sign-out...")
+        
+        currentUser = nil
+        isAuthenticated = false
+        errorMessage = nil
+        
+        // Clear stored authentication state
+        UserDefaults.standard.removeObject(forKey: "mock_is_authenticated")
+        UserDefaults.standard.removeObject(forKey: "mock_username")
+        
+        print("✅ Mock MSAL sign-out successful")
+    }
+    
+    func getAccessToken() -> String? {
+        guard isAuthenticated else { 
+            print("⚠️ No mock authentication - returning nil token")
+            return nil 
+        }
+        
+        let mockToken = "mock-access-token-for-api-calls-\(UUID().uuidString.prefix(8))"
+        print("🎫 Returning mock access token: \(mockToken)")
+        return mockToken
+    }
+    
+    // MARK: - Helper Methods
+    private func checkExistingAuthentication() {
+        let isAuth = UserDefaults.standard.bool(forKey: "mock_is_authenticated")
+        let username = UserDefaults.standard.string(forKey: "mock_username")
+        
+        if isAuth, let username = username {
+            self.currentUser = MockMSALAccount(
+                username: username,
+                identifier: "mock-user-id-12345"
+            )
+            self.isAuthenticated = true
+            print("✅ Restored mock authentication state for: \(username)")
+        }
+    }
+    
+    func getAuthorizationHeader() -> [String: String]? {
+        guard let token = getAccessToken() else { return nil }
+        return ["Authorization": "Bearer \(token)"]
+    }
+}
+
+/*
+ 🚨 IMPORTANT: TEMPORARY MOCK IMPLEMENTATION
+ 
+ This is a temporary mock version of MSALAuthenticationService to allow
+ development while fixing the MSAL import issue.
+ 
+ Features:
+ ✅ Same public interface as real MSAL service  
+ ✅ Simulated sign-in/sign-out with delays
+ ✅ Persistent mock authentication state
+ ✅ Mock access tokens for API testing
+ ✅ Proper error handling simulation
+ 
+ TO RESTORE REAL MSAL:
+ 1. Fix the MSAL package import issue (see MSAL_TROUBLESHOOTING.md)
+ 2. Replace this file with the real MSAL implementation
+ 3. Test with actual Microsoft authentication
+ 
+ The app should work normally with this mock version for development and testing.
+*/
