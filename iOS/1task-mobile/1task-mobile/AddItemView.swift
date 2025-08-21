@@ -17,6 +17,7 @@ struct AddItemView: View {
     @State private var priority: TaskPriority = .medium
     @State private var dueDate: Date = Date()
     @State private var showingDatePicker = false
+    @State private var showingChatAssistant = false
     
     // Goal specific
     @State private var deadline: Date = {
@@ -54,6 +55,9 @@ struct AddItemView: View {
                     
                     // Notes input
                     notesInput
+                    
+                    // Chat Assistant button
+                    chatAssistantButton
                     
                     Spacer(minLength: 50)
                 }
@@ -211,6 +215,41 @@ struct AddItemView: View {
                 .padding(8)
                 .background(Color(.systemGray6))
                 .cornerRadius(8)
+        }
+    }
+    
+    // MARK: - Chat Assistant Button
+    private var chatAssistantButton: some View {
+        Button(action: { showingChatAssistant = true }) {
+            HStack {
+                Image(systemName: "bubble.left.and.bubble.right")
+                    .font(.title3)
+                    .foregroundColor(.white)
+                
+                Text("Chat with Assistant")
+                    .font(.headline)
+                    .fontWeight(.medium)
+                    .foregroundColor(.white)
+                
+                Spacer()
+                
+                Image(systemName: "arrow.right")
+                    .font(.title3)
+                    .foregroundColor(.white)
+            }
+            .padding()
+            .background(
+                LinearGradient(
+                    colors: [.purple, .blue],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                )
+            )
+            .cornerRadius(12)
+        }
+        .sheet(isPresented: $showingChatAssistant) {
+            ChatAssistantView()
+                .environmentObject(appState)
         }
     }
     

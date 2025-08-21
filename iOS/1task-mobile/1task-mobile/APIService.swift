@@ -35,6 +35,12 @@ enum APIError: Error, LocalizedError {
     }
 }
 
+// MARK: - Chat API Models
+struct ChatMessage: Codable {
+    let role: String
+    let content: String
+}
+
 // MARK: - Request/Response Models for Backend
 struct CreateTaskRequest: Codable {
     let title: String
@@ -370,6 +376,24 @@ class APIService: ObservableObject {
             .eraseToAnyPublisher()
     }
     
+    // MARK: - Weekly Goals API
+    func getWeeklyGoals() -> AnyPublisher<[Goal], APIError> {
+        guard let request = makeRequest(endpoint: "weekly-goals?user_id=\(currentUserId)") else {
+            return Fail(error: APIError.invalidURL).eraseToAnyPublisher()
+        }
+        
+        return performRequest(request, responseType: [Goal].self)
+    }
+    
+    // MARK: - Quarterly Goals API
+    func getQuarterlyGoals() -> AnyPublisher<[Goal], APIError> {
+        guard let request = makeRequest(endpoint: "quarterly-goals?user_id=\(currentUserId)") else {
+            return Fail(error: APIError.invalidURL).eraseToAnyPublisher()
+        }
+        
+        return performRequest(request, responseType: [Goal].self)
+    }
+
     // MARK: - Projects API
     func getProjects() -> AnyPublisher<[Project], APIError> {
         guard let request = makeRequest(endpoint: "projects?user_id=\(currentUserId)") else {
@@ -441,6 +465,8 @@ class APIService: ObservableObject {
             getTasks().map { _ in true }.eraseToAnyPublisher(),
             getHabits().map { _ in true }.eraseToAnyPublisher(),
             getYearlyGoals().map { _ in true }.eraseToAnyPublisher(),
+            getWeeklyGoals().map { _ in true }.eraseToAnyPublisher(),
+            getQuarterlyGoals().map { _ in true }.eraseToAnyPublisher(),
             getProjects().map { _ in true }.eraseToAnyPublisher()
         ]
         
@@ -450,6 +476,61 @@ class APIService: ObservableObject {
                 return results.allSatisfy { $0 }
             }
             .eraseToAnyPublisher()
+    }
+    
+    // MARK: - Chat API Functions
+    
+    struct ChatRequest: Codable {
+        let prompt: String
+        let user_id: String
+    }
+    
+    struct ChatResponse: Codable {
+        let response: String
+        let user_id: String?
+        let timestamp: String?
+        let interview_complete: Bool?
+        let current_question: Int?
+    }
+    
+    func sendChatMessage(_ message: String) -> AnyPublisher<ChatResponse, APIError> {
+        let chatRequest = ChatRequest(prompt: message, user_id: currentUserId)
+        
+        guard let data = try? JSONEncoder().encode(chatRequest),
+              let url = URL(string: "\(AppConfiguration.API.chatAPIURL)/chat") else {
+            return Fail(error: APIError.invalidURL)
+                .eraseToAnyPublisher()
+        }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = data
+        request.timeoutInterval = 30.0
+        
+        return Future { promise in
+            URLSession.shared.dataTask(with: request) { data, response, error in
+                if let error = error {
+                    print("Chat API network error: \(error)")
+                    promise(.failure(APIError.networkError(error)))
+                    return
+                }
+                
+                guard let data = data else {
+                    promise(.failure(APIError.noData))
+                    return
+                }
+                
+                do {
+                    let chatResponse = try JSONDecoder.apiDecoder.decode(ChatResponse.self, from: data)
+                    promise(.success(chatResponse))
+                } catch {
+                    print("Chat API decoding error: \(error)")
+                    promise(.failure(APIError.decodingError))
+                }
+            }.resume()
+        }
+        .eraseToAnyPublisher()
     }
 }
 

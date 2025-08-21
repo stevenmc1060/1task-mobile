@@ -165,6 +165,7 @@ struct DashboardView: View {
             LazyVStack(spacing: 8) {
                 ForEach(appState.todaysTasks.prefix(3)) { task in
                     SimpleTaskRowView(task: task)
+                        .environmentObject(appState)
                 }
                 
                 if appState.todaysTasks.count > 3 {
@@ -190,6 +191,7 @@ struct DashboardView: View {
             LazyVStack(spacing: 8) {
                 ForEach(appState.todaysHabits) { habit in
                     SimpleHabitRowView(habit: habit)
+                        .environmentObject(appState)
                 }
             }
         }
@@ -203,6 +205,9 @@ struct DashboardView: View {
                 count: appState.activeGoals.count,
                 action: { showingGoalsEditor = true }
             )
+            
+            // Goal type filters
+            goalTypeFilters
             
             LazyVStack(spacing: 8) {
                 ForEach(appState.activeGoals) { goal in
@@ -226,6 +231,40 @@ struct DashboardView: View {
                     ProjectRowView(project: project)
                 }
             }
+        }
+    }
+    
+    // MARK: - Goal Type Filters
+    private var goalTypeFilters: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 12) {
+                GoalFilterChip(
+                    type: .weekly,
+                    isSelected: appState.showWeeklyGoals,
+                    count: appState.goals.filter { $0.goalType == .weekly && $0.status != .completed }.count
+                ) {
+                    appState.showWeeklyGoals.toggle()
+                }
+                
+                GoalFilterChip(
+                    type: .quarterly,
+                    isSelected: appState.showQuarterlyGoals,
+                    count: appState.goals.filter { $0.goalType == .quarterly && $0.status != .completed }.count
+                ) {
+                    appState.showQuarterlyGoals.toggle()
+                }
+                
+                GoalFilterChip(
+                    type: .yearly,
+                    isSelected: appState.showYearlyGoals,
+                    count: appState.goals.filter { $0.goalType == .yearly && $0.status != .completed }.count
+                ) {
+                    appState.showYearlyGoals.toggle()
+                }
+                
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal)
         }
     }
     

@@ -11,6 +11,9 @@ struct AppConfiguration {
         // For production - your deployed Azure Function App URL
         static let productionBaseURL = "https://1task-backend-api-gse0fsgngtfxhjc6.southcentralus-01.azurewebsites.net/api"
         
+        // Chat API URL (separate Azure Function)
+        static let chatAPIURL = "https://1task-api-mvp-ejfqasajcmcddsha.southcentralus-01.azurewebsites.net/api"
+        
         // Current base URL - set this to use Azure deployment
         static var baseURL: String {
             // Using Azure deployment by default

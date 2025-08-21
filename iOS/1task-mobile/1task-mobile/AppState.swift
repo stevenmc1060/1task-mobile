@@ -51,13 +51,21 @@ class AppState: ObservableObject {
     var todaysTasks: [Task] {
         let today = Date()
         let todayTasks = tasks.filter { task in
-            // Show pending tasks first, then tasks due today
+            // Only show incomplete (pending) tasks
+            guard task.status != .completed else { return false }
+            
+            // Show all pending tasks, or tasks due today
             if task.status == .pending {
-                return true
+                if let dueDate = task.dueDate {
+                    // If it has a due date, show if it's today or overdue
+                    return dueDate <= today || Calendar.current.isDate(dueDate, inSameDayAs: today)
+                } else {
+                    // If no due date, show all pending tasks
+                    return true
+                }
             }
             
-            guard let dueDate = task.dueDate else { return false }
-            return Calendar.current.isDate(dueDate, inSameDayAs: today)
+            return false
         }
         
         print("📊 todaysTasks computed: \(todayTasks.count) from \(tasks.count) total tasks")
@@ -74,16 +82,27 @@ class AppState: ObservableObject {
     }
     
     var activeGoals: [Goal] {
-        let activeGoalsList = goals.filter { $0.status != .completed }
-        print("🏆 activeGoals computed: \(activeGoalsList.count) from \(self.goals.count) total goals")
-        return activeGoalsList
+        let allActiveGoals = goals.filter { $0.status != .completed }
+        
+        // Apply user filtering preferences
+        let filteredGoals = allActiveGoals.filter { goal in
+            switch goal.goalType {
+            case .weekly: return showWeeklyGoals
+            case .quarterly: return showQuarterlyGoals
+            case .yearly: return showYearlyGoals
+            }
+        }
+        
+        print("🏆 activeGoals computed: \(filteredGoals.count) from \(self.goals.count) total goals")
+        print("   Weekly: \(allActiveGoals.filter { $0.goalType == .weekly }.count), Quarterly: \(allActiveGoals.filter { $0.goalType == .quarterly }.count), Yearly: \(allActiveGoals.filter { $0.goalType == .yearly }.count)")
+        return filteredGoals
     }
     
     var activeProjects: [Project] {
         return projects.filter { $0.status != .completed }
     }
     
-    private let apiService = APIService.shared
+    let apiService = APIService.shared
     private var cancellables = Set<AnyCancellable>()
     
     init() {
@@ -208,10 +227,18 @@ class AppState: ObservableObject {
         
         let taskPublisher = apiService.getTasks()
         let habitPublisher = apiService.getHabits()
-        let goalPublisher = apiService.getYearlyGoals()
+        let yearlyGoalsPublisher = apiService.getYearlyGoals()
+        let quarterlyGoalsPublisher = apiService.getQuarterlyGoals()
+        let weeklyGoalsPublisher = apiService.getWeeklyGoals()
         let projectPublisher = apiService.getProjects()
         
-        Publishers.Zip4(taskPublisher, habitPublisher, goalPublisher, projectPublisher)
+        // Combine all goal types into one array
+        let allGoalsPublisher = Publishers.Zip3(yearlyGoalsPublisher, quarterlyGoalsPublisher, weeklyGoalsPublisher)
+            .map { yearly, quarterly, weekly in
+                return yearly + quarterly + weekly
+            }
+        
+        Publishers.Zip4(taskPublisher, habitPublisher, allGoalsPublisher, projectPublisher)
             .receive(on: DispatchQueue.main)
             .sink(
                 receiveCompletion: { [weak self] completion in
@@ -584,6 +611,11 @@ class AppState: ObservableObject {
         errorMessage = nil
     }
     
+    // User preferences for goal filtering
+    @Published var showWeeklyGoals: Bool = true
+    @Published var showQuarterlyGoals: Bool = true  
+    @Published var showYearlyGoals: Bool = true
+
     /// Extract simple user ID from compound Microsoft account ID
     /// Microsoft returns IDs like: "2da56370-78bc-4278-9ed3-c693615ba407.e98c967d-d833-4bef-b319-9a388d2cedcd"
     /// But backend data is stored under: "2da56370-78bc-4278-9ed3-c693615ba407"

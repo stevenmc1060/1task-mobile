@@ -76,12 +76,17 @@ struct SectionHeader: View {
 // MARK: - Task Row View (Simple version for dashboard)
 struct SimpleTaskRowView: View {
     let task: Task
+    @EnvironmentObject var appState: AppState
     
     var body: some View {
         HStack(spacing: 12) {
-            Image(systemName: task.status == .completed ? "checkmark.circle.fill" : "circle")
-                .font(.title3)
-                .foregroundColor(task.status == .completed ? .green : .gray)
+            Button(action: {
+                toggleTaskCompletion()
+            }) {
+                Image(systemName: task.status == .completed ? "checkmark.circle.fill" : "circle")
+                    .font(.title3)
+                    .foregroundColor(task.status == .completed ? .green : .gray)
+            }
             
             VStack(alignment: .leading, spacing: 4) {
                 Text(task.title)
@@ -107,24 +112,35 @@ struct SimpleTaskRowView: View {
         .background(Color(.systemGray6))
         .cornerRadius(12)
     }
+    
+    private func toggleTaskCompletion() {
+        var updatedTask = task
+        updatedTask.status = task.status == .completed ? .pending : .completed
+        appState.updateTask(updatedTask)
+    }
 }
 
 // MARK: - Habit Row View (Simple version for dashboard)
 struct SimpleHabitRowView: View {
     let habit: Habit
+    @EnvironmentObject var appState: AppState
     @State private var currentProgress: Int = 0
     
     var body: some View {
         HStack(spacing: 12) {
-            ZStack {
-                Circle()
-                    .stroke(currentProgress >= habit.targetCount ? Color.green : Color.gray, lineWidth: 2)
-                    .frame(width: 24, height: 24)
-                
-                if currentProgress >= habit.targetCount {
-                    Image(systemName: "checkmark")
-                        .font(.caption)
-                        .foregroundColor(.green)
+            Button(action: {
+                toggleHabitProgress()
+            }) {
+                ZStack {
+                    Circle()
+                        .stroke(currentProgress >= habit.targetCount ? Color.green : Color.gray, lineWidth: 2)
+                        .frame(width: 24, height: 24)
+                    
+                    if currentProgress >= habit.targetCount {
+                        Image(systemName: "checkmark")
+                            .font(.caption)
+                            .foregroundColor(.green)
+                    }
                 }
             }
             
@@ -151,6 +167,19 @@ struct SimpleHabitRowView: View {
         .padding()
         .background(Color(.systemGray6))
         .cornerRadius(12)
+        .onAppear {
+            // TODO: Load today's progress from API or local storage
+            currentProgress = 0
+        }
+    }
+    
+    private func toggleHabitProgress() {
+        if currentProgress >= habit.targetCount {
+            currentProgress = 0
+        } else {
+            currentProgress += 1
+        }
+        // TODO: Save progress to backend
     }
 }
 
@@ -166,44 +195,71 @@ struct GoalRowView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(goal.title)
-                        .font(.headline)
-                        .fontWeight(.medium)
+                    HStack {
+                        Text(goal.title)
+                            .font(.body)
+                            .fontWeight(.medium)
+                            .lineLimit(2)
+                        
+                        Spacer()
+                        
+                        // Goal type tag
+                        HStack(spacing: 4) {
+                            Image(systemName: goal.goalType.icon)
+                                .font(.caption2)
+                            Text(goal.goalType.rawValue)
+                                .font(.caption)
+                                .fontWeight(.medium)
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(goal.goalType.color.opacity(0.1))
+                        .foregroundColor(goal.goalType.color)
+                        .cornerRadius(8)
+                    }
                     
-                    Text(goal.description ?? "No category")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                    if let description = goal.description, !description.isEmpty {
+                        Text(description)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .lineLimit(2)
+                    }
+                    
+                    // Additional info based on goal type
+                    if let weekStart = goal.weekStartDate {
+                        Text("Week of \(weekStart, style: .date)")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    } else if let quarter = goal.targetQuarter, let year = goal.targetYear {
+                        Text("Q\(quarter) \(year)")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    } else if let year = goal.targetYear {
+                        Text("\(year)")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
                 }
-                
-                Spacer()
-                
-                Text("\(Int(progress * 100))%")
-                    .font(.headline)
-                    .fontWeight(.bold)
-                    .foregroundColor(.purple)
             }
             
             // Progress bar
-            GeometryReader { geometry in
-                ZStack(alignment: .leading) {
-                    Rectangle()
-                        .fill(Color.gray.opacity(0.2))
-                        .frame(height: 6)
-                        .cornerRadius(3)
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Text("Progress")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
                     
-                    Rectangle()
-                        .fill(
-                            LinearGradient(
-                                colors: [.purple, .pink],
-                                startPoint: .leading,
-                                endPoint: .trailing
-                            )
-                        )
-                        .frame(width: geometry.size.width * progress, height: 6)
-                        .cornerRadius(3)
+                    Spacer()
+                    
+                    Text("\(Int(goal.progressPercentage))%")
+                        .font(.caption2)
+                        .fontWeight(.medium)
+                        .foregroundColor(.secondary)
                 }
+                
+                ProgressView(value: progress)
+                    .tint(goal.goalType.color)
             }
-            .frame(height: 6)
         }
         .padding()
         .background(Color(.systemGray6))
@@ -282,5 +338,46 @@ struct ProjectRowView: View {
         .padding()
         .background(Color(.systemGray6))
         .cornerRadius(12)
+    }
+}
+
+// MARK: - Goal Filter Chip
+struct GoalFilterChip: View {
+    let type: GoalType
+    let isSelected: Bool
+    let count: Int
+    let action: () -> Void
+    
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Image(systemName: type.icon)
+                    .font(.caption)
+                Text(type.rawValue)
+                    .font(.caption)
+                    .fontWeight(.medium)
+                if count > 0 {
+                    Text("(\(count))")
+                        .font(.caption2)
+                        .foregroundColor(isSelected ? .white.opacity(0.8) : .secondary)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(
+                ZStack {
+                    if isSelected {
+                        type.color
+                    } else {
+                        Color(.systemGray5)
+                    }
+                }
+            )
+            .foregroundColor(isSelected ? .white : .primary)
+            .cornerRadius(16)
+            .opacity(isSelected ? 1.0 : 0.7)
+        }
+        .scaleEffect(isSelected ? 1.05 : 1.0)
+        .animation(.spring(response: 0.3), value: isSelected)
     }
 }

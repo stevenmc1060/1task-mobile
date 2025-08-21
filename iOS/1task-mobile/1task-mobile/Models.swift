@@ -253,6 +253,11 @@ struct Goal: Identifiable, Codable {
     var quarterlyGoalId: String?
     var taskIds: [String]?
     
+    // Quarterly goal fields
+    var targetQuarter: Int?
+    var yearlyGoalId: String?
+    var weeklyGoalIds: [String]?
+    
     // Yearly goal fields
     var targetYear: Int?
     var quarterlyGoalIds: [String]?
@@ -274,23 +279,41 @@ struct Goal: Identifiable, Codable {
         case quarterlyGoalIds = "quarterly_goal_ids"
         case taskIds = "task_ids"
         case targetYear = "target_year"
+        case targetQuarter = "target_quarter"
+        case yearlyGoalId = "yearly_goal_id"
+        case weeklyGoalIds = "weekly_goal_ids"
         case completedAt = "completed_at"
         case createdAt = "created_at"
         case updatedAt = "updated_at"
-        case userId = "user_id"
-    }
+        case userId = "user_id"    }
     
-    init(title: String, description: String? = nil, weekStartDate: Date? = nil, targetYear: Int? = nil) {
+    // Computed property to determine goal type
+    var goalType: GoalType {
+        if weekStartDate != nil {
+            return .weekly
+        } else if targetQuarter != nil {
+            return .quarterly
+        } else if targetYear != nil {
+            return .yearly
+        } else {
+            return .yearly // default
+        }
+    }
+
+    init(title: String, description: String? = nil, weekStartDate: Date? = nil, targetYear: Int? = nil, targetQuarter: Int? = nil) {
         self.id = UUID().uuidString
         self.title = title
         self.description = description
         self.status = .notStarted
         self.weekStartDate = weekStartDate
         self.targetYear = targetYear
+        self.targetQuarter = targetQuarter
         self.progressPercentage = 0.0
         self.keyMetrics = []
         self.quarterlyGoalId = nil
         self.quarterlyGoalIds = nil
+        self.yearlyGoalId = nil
+        self.weeklyGoalIds = nil
         self.taskIds = nil
         self.completedAt = nil
         self.createdAt = Date()
@@ -402,5 +425,56 @@ struct Project: Identifiable, Codable {
         self.createdAt = Date()
         self.updatedAt = Date()
         self.userId = nil
+    }
+}
+
+// MARK: - Goal Type Enum
+enum GoalType: String, CaseIterable, Codable {
+    case weekly = "Weekly"
+    case quarterly = "Quarterly"  
+    case yearly = "Yearly"
+    
+    var color: Color {
+        switch self {
+        case .weekly: return .green
+        case .quarterly: return .orange
+        case .yearly: return .blue
+        }
+    }
+    
+    var icon: String {
+        switch self {
+        case .weekly: return "calendar"
+        case .quarterly: return "calendar.badge.clock"
+        case .yearly: return "calendar.circle"
+        }
+    }
+}
+
+// MARK: - Deprecated GoalStatus Enum
+@available(*, deprecated, message: "Use GoalStatusEnum instead")
+enum GoalStatusEnum: String, CaseIterable, Codable {
+    case notStarted = "not_started"
+    case inProgress = "in_progress"
+    case completed = "completed"
+}
+
+// MARK: - Deprecated ProjectStatus Enum
+@available(*, deprecated, message: "Use ProjectStatusEnum instead")
+enum ProjectStatusEnum: String, CaseIterable, Codable {
+    case planning = "planning"
+    case active = "active"
+    case onHold = "on_hold"
+    case completed = "completed"
+    case cancelled = "cancelled"
+    
+    var color: Color {
+        switch self {
+        case .planning: return .blue
+        case .active: return .green
+        case .onHold: return .orange
+        case .completed: return .gray
+        case .cancelled: return .red
+        }
     }
 }
