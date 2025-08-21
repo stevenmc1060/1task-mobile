@@ -4,16 +4,6 @@
       "filename" : "OneTaskLogo.png",
       "idiom" : "universal",
       "scale" : "1x"
-    },
-    {
-      "filename" : "OneTaskLogo@2x.png",
-      "idiom" : "universal",
-      "scale" : "2x"
-    },
-    {
-      "filename" : "OneTaskLogo@3x.png",
-      "idiom" : "universal",
-      "scale" : "3x"
     }
   ],
   "info" : {

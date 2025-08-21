@@ -226,48 +226,308 @@ class AppState: ObservableObject {
     }
     
     private func syncAllDataFromAPI() {
-        print("📡 Fetching data from backend APIs...")
+        print("📡 Fetching data from backend APIs (sync)...")
         print("🌐 Backend URL: \(APIConfiguration.baseURL)")
         print("🆔 Using User ID: \(apiService.currentUserId)")
         
-        let taskPublisher = apiService.getTasks()
-        let habitPublisher = apiService.getHabits()
-        let yearlyGoalsPublisher = apiService.getYearlyGoals()
-        let quarterlyGoalsPublisher = apiService.getQuarterlyGoals()
-        let weeklyGoalsPublisher = apiService.getWeeklyGoals()
-        let projectPublisher = apiService.getProjects()
+        // Fetch all data types
+        let dispatchGroup = DispatchGroup()
         
-        // Combine all goal types into one array
-        let allGoalsPublisher = Publishers.Zip3(yearlyGoalsPublisher, quarterlyGoalsPublisher, weeklyGoalsPublisher)
-            .map { yearly, quarterly, weekly in
-                return yearly + quarterly + weekly
-            }
-        
-        Publishers.Zip4(taskPublisher, habitPublisher, allGoalsPublisher, projectPublisher)
-            .receive(on: DispatchQueue.main)
+        // Fetch Tasks
+        dispatchGroup.enter()
+        apiService.getTasks()
             .sink(
-                receiveCompletion: { [weak self] completion in
-                    self?.isLoading = false
+                receiveCompletion: { completion in
                     if case .failure(let error) = completion {
-                        print("❌ API sync failed: \(error.localizedDescription)")
-                        print("📱 Falling back to demo data")
-                        self?.handleError(error)
+                        print("❌ Failed to fetch tasks: \(error.localizedDescription)")
                     }
+                    dispatchGroup.leave()
                 },
-                receiveValue: { [weak self] tasks, habits, goals, projects in
-                    print("✅ API sync successful!")
-                    print("📋 Received \(tasks.count) tasks")
-                    print("🎯 Received \(habits.count) habits") 
-                    print("🏆 Received \(goals.count) goals")
-                    print("📁 Received \(projects.count) projects")
-                    
+                receiveValue: { [weak self] tasks in
                     self?.tasks = tasks
-                    self?.habits = habits
-                    self?.goals = goals
-                    self?.projects = projects
+                    print("📋 Received \(tasks.count) tasks")
                 }
             )
             .store(in: &cancellables)
+        
+        // Fetch Habits
+        dispatchGroup.enter()
+        apiService.getHabits()
+            .sink(
+                receiveCompletion: { completion in
+                    if case .failure(let error) = completion {
+                        print("❌ Failed to fetch habits: \(error.localizedDescription)")
+                    }
+                    dispatchGroup.leave()
+                },
+                receiveValue: { [weak self] habits in
+                    self?.habits = habits
+                    print("🎯 Received \(habits.count) habits")
+                }
+            )
+            .store(in: &cancellables)
+        
+        // Fetch Goals (all types)
+        var allGoals: [Goal] = []
+        
+        // Yearly Goals
+        dispatchGroup.enter()
+        apiService.getYearlyGoals()
+            .sink(
+                receiveCompletion: { completion in
+                    if case .failure(let error) = completion {
+                        print("❌ Failed to fetch yearly goals: \(error.localizedDescription)")
+                    }
+                    dispatchGroup.leave()
+                },
+                receiveValue: { yearlyGoals in
+                    allGoals.append(contentsOf: yearlyGoals)
+                }
+            )
+            .store(in: &cancellables)
+        
+        // Quarterly Goals
+        dispatchGroup.enter()
+        apiService.getQuarterlyGoals()
+            .sink(
+                receiveCompletion: { completion in
+                    if case .failure(let error) = completion {
+                        print("❌ Failed to fetch quarterly goals: \(error.localizedDescription)")
+                    }
+                    dispatchGroup.leave()
+                },
+                receiveValue: { quarterlyGoals in
+                    allGoals.append(contentsOf: quarterlyGoals)
+                }
+            )
+            .store(in: &cancellables)
+        
+        // Weekly Goals
+        dispatchGroup.enter()
+        apiService.getWeeklyGoals()
+            .sink(
+                receiveCompletion: { completion in
+                    if case .failure(let error) = completion {
+                        print("❌ Failed to fetch weekly goals: \(error.localizedDescription)")
+                    }
+                    dispatchGroup.leave()
+                },
+                receiveValue: { weeklyGoals in
+                    allGoals.append(contentsOf: weeklyGoals)
+                }
+            )
+            .store(in: &cancellables)
+        
+        // Fetch Projects
+        dispatchGroup.enter()
+        apiService.getProjects()
+            .sink(
+                receiveCompletion: { completion in
+                    if case .failure(let error) = completion {
+                        print("❌ Failed to fetch projects: \(error.localizedDescription)")
+                    }
+                    dispatchGroup.leave()
+                },
+                receiveValue: { [weak self] projects in
+                    self?.projects = projects
+                    print("📁 Received \(projects.count) projects")
+                }
+            )
+            .store(in: &cancellables)
+        
+        // Wait for all requests to complete
+        dispatchGroup.notify(queue: .main) { [weak self] in
+            self?.goals = allGoals
+            print("🏆 Received \(allGoals.count) total goals")
+            print("✅ Sync API sync successful!")
+            self?.isLoading = false
+        }
+    }
+
+    /// Async version of syncDataFromBackend for pull-to-refresh
+    @MainActor
+    func syncDataFromBackendAsync() async {
+        guard !isLoading else { return }
+        
+        print("🔄 Starting async backend sync (pull-to-refresh)...")
+        isLoading = true
+        errorMessage = nil
+        
+        do {
+            // First check if backend is available
+            let _ = try await withCheckedThrowingContinuation { continuation in
+                apiService.checkHealth()
+                    .sink(
+                        receiveCompletion: { completion in
+                            switch completion {
+                            case .finished:
+                                break
+                            case .failure(let error):
+                                continuation.resume(throwing: error)
+                            }
+                        },
+                        receiveValue: { _ in
+                            continuation.resume(returning: true)
+                        }
+                    )
+                    .store(in: &cancellables)
+            }
+            
+            print("✅ Backend health check passed (async)!")
+            await syncAllDataFromAPIAsync()
+            
+        } catch {
+            print("❌ Backend not available (async): \(error.localizedDescription)")
+            print("📱 Keeping current data")
+            isLoading = false
+        }
+    }
+    
+    @MainActor
+    private func syncAllDataFromAPIAsync() async {
+        print("📡 Fetching data from backend APIs (async)...")
+        print("🌐 Backend URL: \(APIConfiguration.baseURL)")
+        print("🆔 Using User ID: \(apiService.currentUserId)")
+        
+        do {
+            // Fetch all data concurrently
+            async let tasksResult = fetchTasksAsync()
+            async let habitsResult = fetchHabitsAsync()
+            async let yearlyGoalsResult = fetchYearlyGoalsAsync()
+            async let quarterlyGoalsResult = fetchQuarterlyGoalsAsync()
+            async let weeklyGoalsResult = fetchWeeklyGoalsAsync()
+            async let projectsResult = fetchProjectsAsync()
+            
+            // Wait for all results
+            let (tasks, habits, yearlyGoals, quarterlyGoals, weeklyGoals, projects) = try await (
+                tasksResult, habitsResult, yearlyGoalsResult, 
+                quarterlyGoalsResult, weeklyGoalsResult, projectsResult
+            )
+            
+            // Combine all goal types
+            let allGoals = yearlyGoals + quarterlyGoals + weeklyGoals
+            
+            print("✅ Async API sync successful!")
+            print("📋 Received \(tasks.count) tasks")
+            print("🎯 Received \(habits.count) habits")
+            print("🏆 Received \(allGoals.count) goals")
+            print("📁 Received \(projects.count) projects")
+            
+            // Update state
+            self.tasks = tasks
+            self.habits = habits
+            self.goals = allGoals
+            self.projects = projects
+            
+        } catch {
+            print("❌ Async API sync failed: \(error.localizedDescription)")
+            print("📱 Keeping current data")
+        }
+        
+        isLoading = false
+    }
+    
+    // Helper methods for async data fetching
+    private func fetchTasksAsync() async throws -> [Task] {
+        return try await withCheckedThrowingContinuation { continuation in
+            apiService.getTasks()
+                .sink(
+                    receiveCompletion: { completion in
+                        if case .failure(let error) = completion {
+                            continuation.resume(throwing: error)
+                        }
+                    },
+                    receiveValue: { tasks in
+                        continuation.resume(returning: tasks)
+                    }
+                )
+                .store(in: &cancellables)
+        }
+    }
+    
+    private func fetchHabitsAsync() async throws -> [Habit] {
+        return try await withCheckedThrowingContinuation { continuation in
+            apiService.getHabits()
+                .sink(
+                    receiveCompletion: { completion in
+                        if case .failure(let error) = completion {
+                            continuation.resume(throwing: error)
+                        }
+                    },
+                    receiveValue: { habits in
+                        continuation.resume(returning: habits)
+                    }
+                )
+                .store(in: &cancellables)
+        }
+    }
+    
+    private func fetchYearlyGoalsAsync() async throws -> [Goal] {
+        return try await withCheckedThrowingContinuation { continuation in
+            apiService.getYearlyGoals()
+                .sink(
+                    receiveCompletion: { completion in
+                        if case .failure(let error) = completion {
+                            continuation.resume(throwing: error)
+                        }
+                    },
+                    receiveValue: { goals in
+                        continuation.resume(returning: goals)
+                    }
+                )
+                .store(in: &cancellables)
+        }
+    }
+    
+    private func fetchQuarterlyGoalsAsync() async throws -> [Goal] {
+        return try await withCheckedThrowingContinuation { continuation in
+            apiService.getQuarterlyGoals()
+                .sink(
+                    receiveCompletion: { completion in
+                        if case .failure(let error) = completion {
+                            continuation.resume(throwing: error)
+                        }
+                    },
+                    receiveValue: { goals in
+                        continuation.resume(returning: goals)
+                    }
+                )
+                .store(in: &cancellables)
+        }
+    }
+    
+    private func fetchWeeklyGoalsAsync() async throws -> [Goal] {
+        return try await withCheckedThrowingContinuation { continuation in
+            apiService.getWeeklyGoals()
+                .sink(
+                    receiveCompletion: { completion in
+                        if case .failure(let error) = completion {
+                            continuation.resume(throwing: error)
+                        }
+                    },
+                    receiveValue: { goals in
+                        continuation.resume(returning: goals)
+                    }
+                )
+                .store(in: &cancellables)
+        }
+    }
+    
+    private func fetchProjectsAsync() async throws -> [Project] {
+        return try await withCheckedThrowingContinuation { continuation in
+            apiService.getProjects()
+                .sink(
+                    receiveCompletion: { completion in
+                        if case .failure(let error) = completion {
+                            continuation.resume(throwing: error)
+                        }
+                    },
+                    receiveValue: { projects in
+                        continuation.resume(returning: projects)
+                    }
+                )
+                .store(in: &cancellables)
+        }
     }
     
     // MARK: - CRUD Operations

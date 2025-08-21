@@ -41,6 +41,9 @@ struct DashboardView: View {
                 }
                 .padding(.horizontal)
             }
+            .refreshable {
+                await refreshData()
+            }
             .background(
                 LinearGradient(
                     colors: [Color(.systemBackground), Color(.systemGray6)],
@@ -266,6 +269,16 @@ struct DashboardView: View {
             }
             .padding(.horizontal)
         }
+    }
+    
+    // MARK: - Pull to Refresh
+    private func refreshData() async {
+        print("🔄 Pull-to-refresh triggered")
+        
+        // Use the async version for pull-to-refresh
+        await appState.syncDataFromBackendAsync()
+        
+        print("✅ Pull-to-refresh completed")
     }
     
     private var greetingTime: String {
