@@ -23,6 +23,22 @@ class AppState: ObservableObject {
     @Published var userId: String = "demo-user"
     @Published var userName: String = "Demo User"
     @Published var userEmail: String = ""
+    
+    /// Computed property to get just the first name from userName
+    var userFirstName: String {
+        // Handle common display name formats:
+        // "Steve McPherson" -> "Steve"
+        // "Steve McPherson (Demo)" -> "Steve"  
+        // "stevenmc" -> "stevenmc"
+        let fullName = userName
+            .replacingOccurrences(of: #"\s*\([^)]*\)"#, with: "", options: .regularExpression) // Remove (Demo) etc.
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        // Split by space and take the first part
+        let components = fullName.components(separatedBy: .whitespaces)
+        return components.first?.capitalized ?? "User"
+    }
+    
     @Published var tasks: [Task] = []
     @Published var habits: [Habit] = []
     @Published var goals: [Goal] = []

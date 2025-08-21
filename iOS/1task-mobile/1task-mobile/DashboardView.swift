@@ -85,7 +85,7 @@ struct DashboardView: View {
                     .fontWeight(.medium)
                     .foregroundColor(.secondary)
                 
-                Text("\(appState.userName)")
+                Text("\(appState.userFirstName)")
                     .font(.largeTitle)
                     .fontWeight(.bold)
             }
@@ -98,7 +98,7 @@ struct DashboardView: View {
                     .fill(Color.blue.gradient)
                     .frame(width: 44, height: 44)
                     .overlay(
-                        Text(String(appState.userName.prefix(1)))
+                        Text(String(appState.userFirstName.prefix(1)))
                             .font(.headline)
                             .fontWeight(.semibold)
                             .foregroundColor(.white)
