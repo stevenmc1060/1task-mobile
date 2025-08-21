@@ -24,8 +24,13 @@ class AppState: ObservableObject {
     @Published var userName: String = "Demo User"
     @Published var userEmail: String = ""
     
+    // User profile information
+    @Published var userProfile: MSALAuthenticationService.UserProfile?
+    @Published var userAvatar: UIImage?
+    @Published var userFirstName: String = ""
+
     /// Computed property to get just the first name from userName
-    var userFirstName: String {
+    var computedUserFirstName: String {
         // Handle common display name formats:
         // "Steve McPherson" -> "Steve"
         // "Steve McPherson (Demo)" -> "Steve"  
@@ -283,17 +288,30 @@ class AppState: ObservableObject {
     }
     
     func updateTask(_ task: Task) {
+        // Update locally first for immediate UI response
+        if let index = tasks.firstIndex(where: { $0.id == task.id }) {
+            tasks[index] = task
+            print("✅ Task updated locally: \(task.title) - status: \(task.status)")
+        }
+        
+        // Then sync with backend
         apiService.updateTask(task)
             .receive(on: DispatchQueue.main)
             .sink(
                 receiveCompletion: { [weak self] completion in
                     if case .failure(let error) = completion {
-                        self?.handleError(error)
+                        print("⚠️ Task update API failed: \(error.localizedDescription)")
+                        // Don't show error for task updates - the local update already happened
+                        // Just log it for debugging
+                        print("⚠️ Task remains updated locally, but could not sync to backend")
                     }
                 },
                 receiveValue: { [weak self] updatedTask in
+                    print("✅ Task successfully synced to backend: \(updatedTask.title)")
+                    // Update with the response from backend in case there are server-side changes
                     if let index = self?.tasks.firstIndex(where: { $0.id == updatedTask.id }) {
                         self?.tasks[index] = updatedTask
+                        print("✅ Task updated from backend response")
                     }
                 }
             )
@@ -478,7 +496,7 @@ class AppState: ObservableObject {
     private func setupAuthenticationSubscription() {
         // Monitor authentication state changes
         authService.$isAuthenticated
-            .sink { [weak self] (isAuthenticated: Bool) in
+            .sink { [weak self] isAuthenticated in
                 self?.isLoggedIn = isAuthenticated
                 
                 if isAuthenticated {
@@ -517,7 +535,16 @@ class AppState: ObservableObject {
         // Monitor authentication errors
         authService.$errorMessage
             .compactMap { $0 }
-            .sink { [weak self] (errorMessage: String) in
+            .sink { [weak self] errorMessage in
+                // Don't show keychain errors to users - they're common iOS issues
+                if errorMessage.contains("keychain") || 
+                   errorMessage.contains("OSStatus error -34018") ||
+                   errorMessage.contains("Sign-out failed") ||
+                   errorMessage.contains("Failed to get items from keychain") {
+                    print("⚠️ Suppressing keychain/sign-out error from user display: \(errorMessage)")
+                    return
+                }
+                
                 self?.handleError(APIError.networkError(NSError(domain: "AuthError", code: -1, userInfo: [NSLocalizedDescriptionKey: errorMessage])))
             }
             .store(in: &cancellables)
@@ -528,7 +555,7 @@ class AppState: ObservableObject {
         authService.getAccessToken()
             .receive(on: DispatchQueue.main)
             .sink(
-                receiveCompletion: { [weak self] (completion: Subscribers.Completion<Error>) in
+                receiveCompletion: { [weak self] completion in
                     if case .failure(let error) = completion {
                         print("❌ Failed to acquire token: \(error.localizedDescription)")
                         // Continue without token for demo purposes
@@ -536,7 +563,7 @@ class AppState: ObservableObject {
                         self?.syncDataFromBackend()
                     }
                 },
-                receiveValue: { [weak self] (token: String) in
+                receiveValue: { [weak self] token in
                     print("✅ Successfully acquired auth token")
                     print("🔑 Token preview: \(String(token.prefix(20)))...")
                     self?.apiService.setAuthToken(token)
@@ -568,9 +595,15 @@ class AppState: ObservableObject {
     }
     
     func logout() {
+        print("🔄 Starting logout process...")
+        
         if authService.isAuthenticated {
+            // Attempt to sign out from MSAL
             authService.signOut()
+            // The authentication subscription will automatically call resetToDemo() 
+            // when isAuthenticated becomes false
         } else {
+            // Already signed out, just reset to demo
             resetToDemo()
         }
     }
@@ -589,6 +622,18 @@ class AppState: ObservableObject {
     // MARK: - Error Handling
     func handleError(_ error: Error) {
         print("🚨 AppState Error: \(error.localizedDescription)")
+        
+        // Check if this is a keychain error during sign-out - these should not be shown to user
+        let nsError = error as NSError
+        if nsError.domain == "NSOSStatusErrorDomain" && nsError.code == -34018 {
+            print("⚠️ Keychain access error - not showing to user (common iOS issue)")
+            return
+        }
+        
+        if nsError.domain == "AuthError" && error.localizedDescription.contains("keychain") {
+            print("⚠️ Authentication keychain error - not showing to user")
+            return
+        }
         
         DispatchQueue.main.async {
             self.errorMessage = error.localizedDescription

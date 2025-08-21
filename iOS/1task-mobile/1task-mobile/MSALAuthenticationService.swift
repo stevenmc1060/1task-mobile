@@ -138,8 +138,8 @@ class MSALAuthenticationService: ObservableObject {
             DispatchQueue.main.async {
                 self?.isLoading = false
                 
-                if let error = error {
-                    let nsError = error as NSError
+                if let authError = error {
+                    let nsError = authError as NSError
                     print("❌ Microsoft sign-in failed (attempt \(attempt)):")
                     print("   Error Domain: \(nsError.domain)")
                     print("   Error Code: \(nsError.code)")
@@ -218,37 +218,56 @@ class MSALAuthenticationService: ObservableObject {
     
     func signOut() {
         print("🔄 Starting Microsoft sign-out...")
-        
-        guard let applicationContext = self.applicationContext else {
-            self.errorMessage = "Application context not initialized"
-            return
-        }
-        
-        guard let currentUser = self.currentUser else {
-            // User is already signed out
-            self.isAuthenticated = false
-            return
-        }
+        print("   Current auth state: isAuthenticated=\(isAuthenticated)")
+        print("   Current user: \(currentUser?.username ?? "none")")
+        print("   Application context: \(applicationContext != nil ? "available" : "nil")")
         
         isLoading = true
         errorMessage = nil
         
-        do {
-            try applicationContext.remove(currentUser)
+        // First, try to sign out from MSAL if we have the proper context and user
+        if let applicationContext = self.applicationContext,
+           let currentUser = self.currentUser {
             
-            DispatchQueue.main.async { [weak self] in
-                self?.currentUser = nil
-                self?.isAuthenticated = false
-                self?.isLoading = false
-                print("✅ Microsoft sign-out successful")
+            do {
+                // Attempt to remove from MSAL keychain
+                try applicationContext.remove(currentUser)
+                print("✅ Successfully removed from MSAL keychain")
+            } catch {
+                print("⚠️ MSAL keychain removal failed: \(error)")
+                print("   Error domain: \((error as NSError).domain)")
+                print("   Error code: \((error as NSError).code)")
+                // Continue with local sign-out - don't fail the entire operation
+                
+                // Check if it's the specific keychain error we're seeing
+                let nsError = error as NSError
+                if nsError.domain == "NSOSStatusErrorDomain" && nsError.code == -34018 {
+                    print("⚠️ Keychain access error (-34018) - proceeding with local sign-out only")
+                } else if nsError.domain.contains("MSALError") && error.localizedDescription.contains("keychain") {
+                    print("⚠️ MSAL keychain error - proceeding with local sign-out only")
+                }
             }
-        } catch {
-            DispatchQueue.main.async { [weak self] in
-                self?.isLoading = false
-                self?.errorMessage = "Sign-out failed: \(error.localizedDescription)"
-                print("❌ Microsoft sign-out failed: \(error)")
-            }
+        } else {
+            print("⚠️ MSAL context or user not available - performing local sign-out only")
         }
+        
+        // Always perform local sign-out regardless of MSAL keychain operation
+        DispatchQueue.main.async { [weak self] in
+            self?.currentUser = nil
+            self?.currentMockUser = nil
+            self?.isAuthenticated = false
+            self?.isLoading = false
+            self?.isUsingMockAuth = false
+            // Don't set errorMessage for keychain issues during sign-out
+            // Only clear it to ensure clean state
+            self?.errorMessage = nil
+            print("✅ Local sign-out completed successfully")
+            print("   Final auth state: isAuthenticated=\(self?.isAuthenticated ?? false)")
+        }
+        
+        // Note: We don't treat keychain errors as failures since the user
+        // should still be able to sign out locally. The token may remain
+        // in keychain but the app state is properly reset.
     }
     
     func getAccessToken() -> AnyPublisher<String, Error> {
@@ -271,8 +290,8 @@ class MSALAuthenticationService: ObservableObject {
             let parameters = MSALSilentTokenParameters(scopes: self.kScopes, account: account)
             
             applicationContext.acquireTokenSilent(with: parameters) { (result, error) in
-                if let error = error {
-                    promise(.failure(error))
+                if let tokenError = error {
+                    promise(.failure(tokenError))
                     return
                 }
                 
@@ -286,6 +305,26 @@ class MSALAuthenticationService: ObservableObject {
         }
         .eraseToAnyPublisher()
     }
+    
+    // Async version of getAccessToken for use with await
+    func getAccessTokenAsync() async -> String? {
+        return await withCheckedContinuation { continuation in
+            getAccessToken()
+                .sink(
+                    receiveCompletion: { completion in
+                        if case .failure = completion {
+                            continuation.resume(returning: nil)
+                        }
+                    },
+                    receiveValue: { token in
+                        continuation.resume(returning: token)
+                    }
+                )
+                .store(in: &cancellables)
+        }
+    }
+    
+    private var cancellables = Set<AnyCancellable>()
     // MARK: - User Info Properties
     var userDisplayName: String {
         return currentUser?.username?.components(separatedBy: "@").first?.capitalized ?? "Unknown User"
@@ -498,8 +537,6 @@ class MSALAuthenticationService: ObservableObject {
         }
     }
     
-    private var cancellables = Set<AnyCancellable>()
-    
     // Helper method for Graph API calls
     private func acquireTokenSilent(completion: @escaping (Result<String, Error>) -> Void) {
         getAccessToken()
@@ -519,7 +556,7 @@ class MSALAuthenticationService: ObservableObject {
     
     // MARK: - Microsoft Graph API Calls
     func fetchUserProfile() async -> (givenName: String?, profilePhoto: UIImage?) {
-        guard let accessToken = await getAccessToken() else {
+        guard let accessToken = await getAccessTokenAsync() else {
             print("❌ No access token available for Graph API")
             return (nil, nil)
         }

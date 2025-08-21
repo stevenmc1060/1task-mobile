@@ -16,49 +16,43 @@ struct SplashScreenView: View {
     
     var body: some View {
         ZStack {
-            // Animated gradient background
-            LinearGradient(
+            // Dark background to match the logo
+            Color.black
+                .ignoresSafeArea()
+            
+            // Subtle animated glow effect
+            RadialGradient(
                 colors: showGradient ? 
-                    [Color.blue.opacity(0.8), Color.purple.opacity(0.6), Color.pink.opacity(0.4)] :
-                    [Color.blue.opacity(0.3), Color.purple.opacity(0.3), Color.pink.opacity(0.2)],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
+                    [Color.blue.opacity(0.3), Color.clear] :
+                    [Color.blue.opacity(0.1), Color.clear],
+                center: .center,
+                startRadius: 50,
+                endRadius: 300
             )
             .ignoresSafeArea()
-            .animation(.easeInOut(duration: 2.0).repeatForever(autoreverses: true), value: showGradient)
+            .animation(.easeInOut(duration: 3.0).repeatForever(autoreverses: true), value: showGradient)
             
-            VStack(spacing: 30) {
-                // Logo placeholder - you can replace with actual logo
-                ZStack {
-                    Circle()
-                        .fill(
-                            LinearGradient(
-                                colors: [.white.opacity(0.8), .white.opacity(0.4)],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                        .frame(width: 120, height: 120)
-                        .shadow(color: .black.opacity(0.2), radius: 20, x: 0, y: 10)
-                    
-                    Text("1")
-                        .font(.system(size: 50, weight: .bold, design: .rounded))
-                        .foregroundColor(.blue)
-                }
-                .scaleEffect(logoScale)
-                .opacity(logoOpacity)
+            VStack(spacing: 40) {
+                // OneTask Logo
+                Image("OneTaskLogo")
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 200, height: 200)
+                    .scaleEffect(logoScale)
+                    .opacity(logoOpacity)
                 
-                // App name
-                VStack(spacing: 8) {
-                    Text("1TaskAssistant")
-                        .font(.system(size: 32, weight: .bold, design: .rounded))
+                // App name and tagline
+                VStack(spacing: 12) {
+                    Text("OneTask Assistant")
+                        .font(.system(size: 36, weight: .bold, design: .rounded))
                         .foregroundColor(.white)
                         .offset(y: titleOffset)
                         .opacity(logoOpacity)
                     
-                    Text("Your Productivity Companion")
-                        .font(.system(size: 16, weight: .medium))
+                    Text("Your AI-Powered Productivity Companion")
+                        .font(.system(size: 18, weight: .medium))
                         .foregroundColor(.white.opacity(0.8))
+                        .multilineTextAlignment(.center)
                         .offset(y: titleOffset)
                         .opacity(logoOpacity * 0.8)
                 }
@@ -70,17 +64,17 @@ struct SplashScreenView: View {
     }
     
     private func startAnimations() {
-        // Start gradient animation
+        // Start subtle glow animation
         showGradient = true
         
-        // Animate logo
-        withAnimation(.easeOut(duration: 0.8)) {
+        // Animate logo with a smooth entrance
+        withAnimation(.easeOut(duration: 1.2)) {
             logoScale = 1.0
             logoOpacity = 1.0
         }
         
-        // Animate title
-        withAnimation(.easeOut(duration: 0.8).delay(0.3)) {
+        // Animate title with slight delay for dramatic effect
+        withAnimation(.easeOut(duration: 1.0).delay(0.5)) {
             titleOffset = 0
         }
     }

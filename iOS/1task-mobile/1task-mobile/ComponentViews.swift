@@ -115,7 +115,17 @@ struct SimpleTaskRowView: View {
     
     private func toggleTaskCompletion() {
         var updatedTask = task
-        updatedTask.status = task.status == .completed ? .pending : .completed
+        if task.status == .completed {
+            // Mark as pending (uncomplete)
+            updatedTask.status = .pending
+            updatedTask.completedAt = nil
+        } else {
+            // Mark as completed
+            updatedTask.status = .completed
+            updatedTask.completedAt = Date()
+        }
+        
+        print("🔄 Updating task: \(updatedTask.title) to status: \(updatedTask.status)")
         appState.updateTask(updatedTask)
     }
 }

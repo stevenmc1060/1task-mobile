@@ -136,12 +136,12 @@ struct AddItemView: View {
                     .fontWeight(.medium)
                 
                 Picker("Priority", selection: $priority) {
-                    ForEach(TaskItem.Priority.allCases, id: \.self) { priority in
+                    ForEach(TaskPriority.allCases, id: \.self) { priority in
                         HStack {
                             Circle()
                                 .fill(priority.color)
                                 .frame(width: 12, height: 12)
-                            Text(priority.rawValue)
+                            Text(priority.rawValue.capitalized)
                         }
                         .tag(priority)
                     }
@@ -172,8 +172,8 @@ struct AddItemView: View {
                 .fontWeight(.medium)
             
             Picker("Frequency", selection: $frequency) {
-                ForEach(HabitItem.Frequency.allCases, id: \.self) { freq in
-                    Text(freq.rawValue).tag(freq)
+                ForEach(HabitFrequency.allCases, id: \.self) { freq in
+                    Text(freq.rawValue.capitalized).tag(freq)
                 }
             }
             .pickerStyle(SegmentedPickerStyle())

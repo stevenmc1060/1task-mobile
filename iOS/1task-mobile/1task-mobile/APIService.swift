@@ -49,6 +49,15 @@ struct CreateTaskRequest: Codable {
     let priority: String
     let status: String
     let userId: String
+    
+    enum CodingKeys: String, CodingKey {
+        case title
+        case description
+        case dueDate = "due_date"
+        case priority
+        case status
+        case userId = "user_id"
+    }
 }
 
 struct UpdateTaskRequest: Codable {
@@ -57,6 +66,16 @@ struct UpdateTaskRequest: Codable {
     let dueDate: String?
     let priority: String?
     let status: String?
+    let completedAt: String?
+    
+    enum CodingKeys: String, CodingKey {
+        case title
+        case description
+        case dueDate = "due_date"
+        case priority
+        case status
+        case completedAt = "completed_at"
+    }
 }
 
 struct CreateHabitRequest: Codable {
@@ -67,6 +86,16 @@ struct CreateHabitRequest: Codable {
     let tags: [String]
     let status: String
     let userId: String
+    
+    enum CodingKeys: String, CodingKey {
+        case title
+        case description
+        case frequency
+        case targetCount = "target_count"
+        case tags
+        case status
+        case userId = "user_id"
+    }
 }
 
 struct UpdateHabitRequest: Codable {
@@ -76,6 +105,15 @@ struct UpdateHabitRequest: Codable {
     let targetCount: Int?
     let tags: [String]?
     let status: String?
+    
+    enum CodingKeys: String, CodingKey {
+        case title
+        case description
+        case frequency
+        case targetCount = "target_count"
+        case tags
+        case status
+    }
 }
 
 struct CreateYearlyGoalRequest: Codable {
@@ -84,6 +122,14 @@ struct CreateYearlyGoalRequest: Codable {
     let weekStartDate: String?
     let keyMetrics: [String]
     let userId: String
+    
+    enum CodingKeys: String, CodingKey {
+        case title
+        case description
+        case weekStartDate = "week_start_date"
+        case keyMetrics = "key_metrics"
+        case userId = "user_id"
+    }
 }
 
 struct UpdateYearlyGoalRequest: Codable {
@@ -93,6 +139,15 @@ struct UpdateYearlyGoalRequest: Codable {
     let keyMetrics: [String]?
     let progressPercentage: Double?
     let status: String?
+    
+    enum CodingKeys: String, CodingKey {
+        case title
+        case description
+        case weekStartDate = "week_start_date"
+        case keyMetrics = "key_metrics"
+        case progressPercentage = "progress_percentage"
+        case status
+    }
 }
 
 struct CreateProjectRequest: Codable {
@@ -104,6 +159,17 @@ struct CreateProjectRequest: Codable {
     let endDate: String?
     let tags: [String]
     let userId: String
+    
+    enum CodingKeys: String, CodingKey {
+        case title
+        case description
+        case status
+        case priority
+        case startDate = "start_date"
+        case endDate = "end_date"
+        case tags
+        case userId = "user_id"
+    }
 }
 
 struct UpdateProjectRequest: Codable {
@@ -115,6 +181,17 @@ struct UpdateProjectRequest: Codable {
     let endDate: String?
     let tags: [String]?
     let progressPercentage: Double?
+    
+    enum CodingKeys: String, CodingKey {
+        case title
+        case description
+        case status
+        case priority
+        case startDate = "start_date"
+        case endDate = "end_date"
+        case tags
+        case progressPercentage = "progress_percentage"
+    }
 }
 
 // MARK: - API Service
@@ -165,10 +242,19 @@ class APIService: ObservableObject {
     
     private func performRequest<T: Codable>(_ request: URLRequest, responseType: T.Type) -> AnyPublisher<T, APIError> {
         return session.dataTaskPublisher(for: request)
-            .map(\.data)
+            .map { data, response in
+                // Debug: Log raw response
+                if let httpResponse = response as? HTTPURLResponse {
+                    print("🌐 HTTP Status: \(httpResponse.statusCode)")
+                }
+                if let responseString = String(data: data, encoding: .utf8) {
+                    print("🌐 Raw API Response: \(responseString)")
+                }
+                return data
+            }
             .decode(type: T.self, decoder: JSONDecoder.apiDecoder)
             .mapError { error in
-                print("🚨 Decoding error: \(error)")
+                print("🚨 Decoding error for \(T.self): \(error)")
                 if let decodingError = error as? DecodingError {
                     print("🚨 Detailed decoding error: \(decodingError)")
                 }
@@ -225,11 +311,14 @@ class APIService: ObservableObject {
             description: task.description,
             dueDate: task.dueDate?.ISO8601Format(),
             priority: task.priority.rawValue,
-            status: task.status.rawValue
+            status: task.status.rawValue,
+            completedAt: task.completedAt?.ISO8601Format()
         )
         
+        print("🔄 Sending task update request: \(updateRequest)")
+        
         guard let data = try? JSONEncoder().encode(updateRequest),
-              let request = makeRequest(endpoint: "tasks/\(task.id)", method: "PUT", body: data) else {
+              let request = makeRequest(endpoint: "tasks/\(task.id)?user_id=\(currentUserId)", method: "PUT", body: data) else {
             return Fail(error: APIError.invalidURL).eraseToAnyPublisher()
         }
         
@@ -237,7 +326,7 @@ class APIService: ObservableObject {
     }
     
     func deleteTask(_ taskId: String) -> AnyPublisher<Bool, APIError> {
-        guard let request = makeRequest(endpoint: "tasks/\(taskId)", method: "DELETE") else {
+        guard let request = makeRequest(endpoint: "tasks/\(taskId)?user_id=\(currentUserId)", method: "DELETE") else {
             return Fail(error: APIError.invalidURL).eraseToAnyPublisher()
         }
         
@@ -291,7 +380,7 @@ class APIService: ObservableObject {
         )
         
         guard let data = try? JSONEncoder().encode(updateRequest),
-              let request = makeRequest(endpoint: "habits/\(habit.id)", method: "PUT", body: data) else {
+              let request = makeRequest(endpoint: "habits/\(habit.id)?user_id=\(currentUserId)", method: "PUT", body: data) else {
             return Fail(error: APIError.invalidURL).eraseToAnyPublisher()
         }
         
@@ -299,7 +388,7 @@ class APIService: ObservableObject {
     }
     
     func deleteHabit(_ habitId: String) -> AnyPublisher<Bool, APIError> {
-        guard let request = makeRequest(endpoint: "habits/\(habitId)", method: "DELETE") else {
+        guard let request = makeRequest(endpoint: "habits/\(habitId)?user_id=\(currentUserId)", method: "DELETE") else {
             return Fail(error: APIError.invalidURL).eraseToAnyPublisher()
         }
         
@@ -353,7 +442,7 @@ class APIService: ObservableObject {
         )
         
         guard let data = try? JSONEncoder().encode(updateRequest),
-              let request = makeRequest(endpoint: "yearly-goals/\(goal.id)", method: "PUT", body: data) else {
+              let request = makeRequest(endpoint: "yearly-goals/\(goal.id)?user_id=\(currentUserId)", method: "PUT", body: data) else {
             return Fail(error: APIError.invalidURL).eraseToAnyPublisher()
         }
         
@@ -361,7 +450,7 @@ class APIService: ObservableObject {
     }
     
     func deleteYearlyGoal(_ goalId: String) -> AnyPublisher<Bool, APIError> {
-        guard let request = makeRequest(endpoint: "yearly-goals/\(goalId)", method: "DELETE") else {
+        guard let request = makeRequest(endpoint: "yearly-goals/\(goalId)?user_id=\(currentUserId)", method: "DELETE") else {
             return Fail(error: APIError.invalidURL).eraseToAnyPublisher()
         }
         
@@ -436,7 +525,7 @@ class APIService: ObservableObject {
         )
         
         guard let data = try? JSONEncoder().encode(updateRequest),
-              let request = makeRequest(endpoint: "projects/\(project.id)", method: "PUT", body: data) else {
+              let request = makeRequest(endpoint: "projects/\(project.id)?user_id=\(currentUserId)", method: "PUT", body: data) else {
             return Fail(error: APIError.invalidURL).eraseToAnyPublisher()
         }
         
@@ -444,7 +533,7 @@ class APIService: ObservableObject {
     }
     
     func deleteProject(_ projectId: String) -> AnyPublisher<Bool, APIError> {
-        guard let request = makeRequest(endpoint: "projects/\(projectId)", method: "DELETE") else {
+        guard let request = makeRequest(endpoint: "projects/\(projectId)?user_id=\(currentUserId)", method: "DELETE") else {
             return Fail(error: APIError.invalidURL).eraseToAnyPublisher()
         }
         
