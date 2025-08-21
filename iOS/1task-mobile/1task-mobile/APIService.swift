@@ -160,8 +160,12 @@ class APIService: ObservableObject {
     private func performRequest<T: Codable>(_ request: URLRequest, responseType: T.Type) -> AnyPublisher<T, APIError> {
         return session.dataTaskPublisher(for: request)
             .map(\.data)
-            .decode(type: T.self, decoder: JSONDecoder())
+            .decode(type: T.self, decoder: JSONDecoder.apiDecoder)
             .mapError { error in
+                print("🚨 Decoding error: \(error)")
+                if let decodingError = error as? DecodingError {
+                    print("🚨 Detailed decoding error: \(decodingError)")
+                }
                 if error is DecodingError {
                     return APIError.decodingError
                 } else {
@@ -318,7 +322,7 @@ class APIService: ObservableObject {
         let createRequest = CreateYearlyGoalRequest(
             title: goal.title,
             description: goal.description,
-            weekStartDate: dateFormatter.string(from: goal.weekStartDate),
+            weekStartDate: goal.weekStartDate.map { dateFormatter.string(from: $0) },
             keyMetrics: goal.keyMetrics,
             userId: currentUserId
         )
@@ -336,7 +340,7 @@ class APIService: ObservableObject {
         let updateRequest = UpdateYearlyGoalRequest(
             title: goal.title,
             description: goal.description,
-            weekStartDate: dateFormatter.string(from: goal.weekStartDate),
+            weekStartDate: goal.weekStartDate.map { dateFormatter.string(from: $0) },
             keyMetrics: goal.keyMetrics,
             progressPercentage: goal.progressPercentage,
             status: goal.status.rawValue
@@ -461,19 +465,79 @@ extension Date {
 extension JSONDecoder {
     static let apiDecoder: JSONDecoder = {
         let decoder = JSONDecoder()
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         decoder.dateDecodingStrategy = .custom { decoder in
             let container = try decoder.singleValueContainer()
             let dateString = try container.decode(String.self)
             
-            if let date = formatter.date(from: dateString) {
+            // Backend format with timezone: "2025-08-11 18:32:03.312000+00:00"
+            let backendFormatterWithTZ = DateFormatter()
+            backendFormatterWithTZ.dateFormat = "yyyy-MM-dd HH:mm:ss.SSSSSSxxxx"
+            backendFormatterWithTZ.locale = Locale(identifier: "en_US_POSIX")
+            if let date = backendFormatterWithTZ.date(from: dateString) {
                 return date
             }
             
-            // Fallback to basic ISO8601 without fractional seconds
-            formatter.formatOptions = [.withInternetDateTime]
-            if let date = formatter.date(from: dateString) {
+            // Backend format without timezone but with microseconds: "2025-08-07 13:08:23.609608"
+            let backendFormatterNoTZ = DateFormatter()
+            backendFormatterNoTZ.dateFormat = "yyyy-MM-dd HH:mm:ss.SSSSSS"
+            backendFormatterNoTZ.locale = Locale(identifier: "en_US_POSIX")
+            backendFormatterNoTZ.timeZone = TimeZone.current // Use local timezone
+            if let date = backendFormatterNoTZ.date(from: dateString) {
+                return date
+            }
+            
+            // Backend format with timezone but without microseconds: "2025-08-11 18:32:03+00:00"
+            backendFormatterWithTZ.dateFormat = "yyyy-MM-dd HH:mm:ssxxxx"
+            if let date = backendFormatterWithTZ.date(from: dateString) {
+                return date
+            }
+            
+            // Backend format without timezone and without microseconds: "2025-08-07 13:08:23"
+            backendFormatterNoTZ.dateFormat = "yyyy-MM-dd HH:mm:ss"
+            if let date = backendFormatterNoTZ.date(from: dateString) {
+                return date
+            }
+            
+            // ISO format with T separator and microseconds but no timezone: "2025-08-13T13:58:11.628404"
+            let isoFormatterNoTZ = DateFormatter()
+            isoFormatterNoTZ.dateFormat = "yyyy-MM-dd'T'HH:mm:ss.SSSSSS"
+            isoFormatterNoTZ.locale = Locale(identifier: "en_US_POSIX")
+            isoFormatterNoTZ.timeZone = TimeZone.current // Use local timezone
+            if let date = isoFormatterNoTZ.date(from: dateString) {
+                return date
+            }
+            
+            // ISO format with T separator and shorter fractional seconds: "2025-08-13T13:58:11.628"
+            isoFormatterNoTZ.dateFormat = "yyyy-MM-dd'T'HH:mm:ss.SSS"
+            if let date = isoFormatterNoTZ.date(from: dateString) {
+                return date
+            }
+            
+            // ISO format with T separator but no fractional seconds: "2025-08-13T13:58:11"
+            isoFormatterNoTZ.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
+            if let date = isoFormatterNoTZ.date(from: dateString) {
+                return date
+            }
+            
+            // Date only format: "2025-08-07"
+            let dateOnlyFormatter = DateFormatter()
+            dateOnlyFormatter.dateFormat = "yyyy-MM-dd"
+            dateOnlyFormatter.locale = Locale(identifier: "en_US_POSIX")
+            dateOnlyFormatter.timeZone = TimeZone.current
+            if let date = dateOnlyFormatter.date(from: dateString) {
+                return date
+            }
+            
+            // Fallback to ISO8601 format with T separator (standard format)
+            let iso8601Formatter = ISO8601DateFormatter()
+            iso8601Formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            if let date = iso8601Formatter.date(from: dateString) {
+                return date
+            }
+            
+            // Final fallback to basic ISO8601
+            iso8601Formatter.formatOptions = [.withInternetDateTime]
+            if let date = iso8601Formatter.date(from: dateString) {
                 return date
             }
             

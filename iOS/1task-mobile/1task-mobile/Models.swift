@@ -237,6 +237,7 @@ enum HabitFrequency: String, CaseIterable, Codable {
 enum HabitStatus: String, CaseIterable, Codable {
     case active = "active"
     case paused = "paused"
+    case completed = "completed"
     case archived = "archived"
 }
 
@@ -246,11 +247,19 @@ struct Goal: Identifiable, Codable {
     var title: String
     var description: String?
     var status: GoalStatus
-    var weekStartDate: Date
+    
+    // Weekly goal fields
+    var weekStartDate: Date?
+    var quarterlyGoalId: String?
+    var taskIds: [String]?
+    
+    // Yearly goal fields
+    var targetYear: Int?
+    var quarterlyGoalIds: [String]?
+    
+    // Common fields
     var progressPercentage: Double
     var keyMetrics: [String]
-    var quarterlyGoalId: String?
-    var taskIds: [String]
     var completedAt: Date?
     var createdAt: Date?
     var updatedAt: Date?
@@ -262,23 +271,27 @@ struct Goal: Identifiable, Codable {
         case progressPercentage = "progress_percentage"
         case keyMetrics = "key_metrics"
         case quarterlyGoalId = "quarterly_goal_id"
+        case quarterlyGoalIds = "quarterly_goal_ids"
         case taskIds = "task_ids"
+        case targetYear = "target_year"
         case completedAt = "completed_at"
         case createdAt = "created_at"
         case updatedAt = "updated_at"
         case userId = "user_id"
     }
     
-    init(title: String, description: String? = nil, weekStartDate: Date = Date()) {
+    init(title: String, description: String? = nil, weekStartDate: Date? = nil, targetYear: Int? = nil) {
         self.id = UUID().uuidString
         self.title = title
         self.description = description
         self.status = .notStarted
         self.weekStartDate = weekStartDate
+        self.targetYear = targetYear
         self.progressPercentage = 0.0
         self.keyMetrics = []
         self.quarterlyGoalId = nil
-        self.taskIds = []
+        self.quarterlyGoalIds = nil
+        self.taskIds = nil
         self.completedAt = nil
         self.createdAt = Date()
         self.updatedAt = Date()

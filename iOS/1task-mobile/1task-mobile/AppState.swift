@@ -567,6 +567,18 @@ class AppState: ObservableObject {
         showingError = false
         errorMessage = nil
     }
+    
+    /// Extract simple user ID from compound Microsoft account ID
+    /// Microsoft returns IDs like: "2da56370-78bc-4278-9ed3-c693615ba407.e98c967d-d833-4bef-b319-9a388d2cedcd"
+    /// But backend data is stored under: "2da56370-78bc-4278-9ed3-c693615ba407"
+    static func extractSimpleUserId(from compoundId: String) -> String {
+        // Split by the first dot and return the first part
+        if let dotIndex = compoundId.firstIndex(of: ".") {
+            return String(compoundId[..<dotIndex])
+        }
+        // If no dot found, return the original ID
+        return compoundId
+    }
 }
 
 // MARK: - AddItemType enum
@@ -598,19 +610,5 @@ enum AddItemType: CaseIterable {
         case .goal: return .purple
         case .project: return .orange
         }
-    }
-    
-    // MARK: - Helper Functions
-    
-    /// Extract simple user ID from compound Microsoft account ID
-    /// Microsoft returns IDs like: "2da56370-78bc-4278-9ed3-c693615ba407.e98c967d-d833-4bef-b319-9a388d2cedcd"
-    /// But backend data is stored under: "2da56370-78bc-4278-9ed3-c693615ba407"
-    static func extractSimpleUserId(from compoundId: String) -> String {
-        // Split by the first dot and return the first part
-        if let dotIndex = compoundId.firstIndex(of: ".") {
-            return String(compoundId[..<dotIndex])
-        }
-        // If no dot found, return the original ID
-        return compoundId
     }
 }
