@@ -342,4 +342,256 @@ class MSALAuthenticationService: ObservableObject {
             self.signInWithRetry(attempt: 1)
         }
     }
+    
+    // MARK: - Microsoft Graph API Calls
+    
+    struct UserProfile: Codable {
+        let givenName: String?
+        let surname: String?
+        let displayName: String?
+        let mail: String?
+        let userPrincipalName: String?
+    }
+    
+    func fetchUserProfile() -> AnyPublisher<UserProfile, Error> {
+        return Future<UserProfile, Error> { [weak self] promise in
+            guard let self = self else {
+                promise(.failure(NSError(domain: "MSALAuthenticationService", code: -1, userInfo: [NSLocalizedDescriptionKey: "Service deallocated"])))
+                return
+            }
+            
+            self.acquireTokenSilent { result in
+                switch result {
+                case .success(let token):
+                    self.makeGraphAPIRequest(
+                        endpoint: "https://graph.microsoft.com/v1.0/me",
+                        accessToken: token
+                    ) { (result: Result<UserProfile, Error>) in
+                        promise(result)
+                    }
+                case .failure(let error):
+                    promise(.failure(error))
+                }
+            }
+        }
+        .eraseToAnyPublisher()
+    }
+    
+    func fetchUserPhoto() -> AnyPublisher<UIImage, Error> {
+        return Future<UIImage, Error> { [weak self] promise in
+            guard let self = self else {
+                promise(.failure(NSError(domain: "MSALAuthenticationService", code: -1, userInfo: [NSLocalizedDescriptionKey: "Service deallocated"])))
+                return
+            }
+            
+            self.acquireTokenSilent { result in
+                switch result {
+                case .success(let token):
+                    // First try to get the photo
+                    var request = URLRequest(url: URL(string: "https://graph.microsoft.com/v1.0/me/photo/$value")!)
+                    request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+                    request.httpMethod = "GET"
+                    
+                    URLSession.shared.dataTask(with: request) { data, response, error in
+                        if let error = error {
+                            promise(.failure(error))
+                            return
+                        }
+                        
+                        guard let data = data,
+                              let image = UIImage(data: data) else {
+                            // If no photo available, create a default avatar with user's initials
+                            self.fetchUserProfile().sink(
+                                receiveCompletion: { completion in
+                                    if case .failure(let error) = completion {
+                                        // Create a generic default avatar
+                                        let defaultImage = self.createDefaultAvatar(with: "?")
+                                        promise(.success(defaultImage))
+                                    }
+                                },
+                                receiveValue: { profile in
+                                    let initials = self.getInitials(from: profile)
+                                    let defaultImage = self.createDefaultAvatar(with: initials)
+                                    promise(.success(defaultImage))
+                                }
+                            ).store(in: &self.cancellables)
+                            return
+                        }
+                        
+                        promise(.success(image))
+                    }.resume()
+                    
+                case .failure(let error):
+                    promise(.failure(error))
+                }
+            }
+        }
+        .eraseToAnyPublisher()
+    }
+    
+    private func makeGraphAPIRequest<T: Codable>(
+        endpoint: String,
+        accessToken: String,
+        completion: @escaping (Result<T, Error>) -> Void
+    ) {
+        guard let url = URL(string: endpoint) else {
+            completion(.failure(NSError(domain: "MSALAuthenticationService", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid URL"])))
+            return
+        }
+        
+        var request = URLRequest(url: url)
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpMethod = "GET"
+        
+        URLSession.shared.dataTask(with: request) { data, response, error in
+            if let error = error {
+                completion(.failure(error))
+                return
+            }
+            
+            guard let data = data else {
+                completion(.failure(NSError(domain: "MSALAuthenticationService", code: -1, userInfo: [NSLocalizedDescriptionKey: "No data received"])))
+                return
+            }
+            
+            do {
+                let result = try JSONDecoder().decode(T.self, from: data)
+                completion(.success(result))
+            } catch {
+                completion(.failure(error))
+            }
+        }.resume()
+    }
+    
+    private func getInitials(from profile: UserProfile) -> String {
+        let firstName = profile.givenName?.prefix(1) ?? ""
+        let lastName = profile.surname?.prefix(1) ?? ""
+        return "\(firstName)\(lastName)".uppercased()
+    }
+    
+    private func createDefaultAvatar(with initials: String) -> UIImage {
+        let size = CGSize(width: 100, height: 100)
+        let renderer = UIGraphicsImageRenderer(size: size)
+        
+        return renderer.image { context in
+            // Background circle
+            UIColor.systemBlue.setFill()
+            context.cgContext.fillEllipse(in: CGRect(origin: .zero, size: size))
+            
+            // Text
+            let attributes: [NSAttributedString.Key: Any] = [
+                .font: UIFont.systemFont(ofSize: 36, weight: .medium),
+                .foregroundColor: UIColor.white
+            ]
+            
+            let text = initials.isEmpty ? "?" : initials
+            let textSize = text.size(withAttributes: attributes)
+            let textRect = CGRect(
+                x: (size.width - textSize.width) / 2,
+                y: (size.height - textSize.height) / 2,
+                width: textSize.width,
+                height: textSize.height
+            )
+            
+            text.draw(in: textRect, withAttributes: attributes)
+        }
+    }
+    
+    private var cancellables = Set<AnyCancellable>()
+    
+    // Helper method for Graph API calls
+    private func acquireTokenSilent(completion: @escaping (Result<String, Error>) -> Void) {
+        getAccessToken()
+            .receive(on: DispatchQueue.main)
+            .sink(
+                receiveCompletion: { result in
+                    if case .failure(let error) = result {
+                        completion(.failure(error))
+                    }
+                },
+                receiveValue: { token in
+                    completion(.success(token))
+                }
+            )
+            .store(in: &cancellables)
+    }
+    
+    // MARK: - Microsoft Graph API Calls
+    func fetchUserProfile() async -> (givenName: String?, profilePhoto: UIImage?) {
+        guard let accessToken = await getAccessToken() else {
+            print("❌ No access token available for Graph API")
+            return (nil, nil)
+        }
+        
+        async let profileTask = fetchUserProfileInfo(accessToken: accessToken)
+        async let photoTask = fetchUserProfilePhoto(accessToken: accessToken)
+        
+        let profile = await profileTask
+        let photo = await photoTask
+        
+        return (profile, photo)
+    }
+    
+    private func fetchUserProfileInfo(accessToken: String) async -> String? {
+        guard let url = URL(string: "https://graph.microsoft.com/v1.0/me?$select=givenName,displayName") else {
+            return nil
+        }
+        
+        var request = URLRequest(url: url)
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            
+            if let httpResponse = response as? HTTPURLResponse,
+               httpResponse.statusCode == 200 {
+                
+                let json = try JSONSerialization.jsonObject(with: data, options: [])
+                if let dict = json as? [String: Any],
+                   let givenName = dict["givenName"] as? String {
+                    print("✅ Fetched user profile: \(givenName)")
+                    return givenName
+                }
+            } else {
+                print("❌ Failed to fetch user profile: HTTP \((response as? HTTPURLResponse)?.statusCode ?? 0)")
+            }
+        } catch {
+            print("❌ Error fetching user profile: \(error)")
+        }
+        
+        return nil
+    }
+    
+    private func fetchUserProfilePhoto(accessToken: String) async -> UIImage? {
+        guard let url = URL(string: "https://graph.microsoft.com/v1.0/me/photo/$value") else {
+            return nil
+        }
+        
+        var request = URLRequest(url: url)
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            
+            if let httpResponse = response as? HTTPURLResponse,
+               httpResponse.statusCode == 200 {
+                
+                if let image = UIImage(data: data) {
+                    print("✅ Fetched user profile photo")
+                    return image
+                }
+            } else if let httpResponse = response as? HTTPURLResponse, 
+                      httpResponse.statusCode == 404 {
+                print("ℹ️ No profile photo available for user")
+            } else {
+                print("❌ Failed to fetch user photo: HTTP \((response as? HTTPURLResponse)?.statusCode ?? 0)")
+            }
+        } catch {
+            print("❌ Error fetching user photo: \(error)")
+        }
+        
+        return nil
+    }
 }
