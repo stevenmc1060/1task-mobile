@@ -34,18 +34,33 @@ class AppState: ObservableObject {
     // Computed properties for dashboard
     var todaysTasks: [Task] {
         let today = Date()
-        return tasks.filter { task in
+        let todayTasks = tasks.filter { task in
+            // Show pending tasks first, then tasks due today
+            if task.status == .pending {
+                return true
+            }
+            
             guard let dueDate = task.dueDate else { return false }
             return Calendar.current.isDate(dueDate, inSameDayAs: today)
         }
+        
+        print("📊 todaysTasks computed: \(todayTasks.count) from \(tasks.count) total tasks")
+        print("   Pending tasks: \(tasks.filter { $0.status == .pending }.count)")
+        print("   Completed tasks: \(tasks.filter { $0.status == .completed }.count)")
+        
+        return todayTasks
     }
     
     var todaysHabits: [Habit] {
-        return habits.filter { $0.status == .active }
+        let activeHabits = habits.filter { $0.status == .active }
+        print("🎯 todaysHabits computed: \(activeHabits.count) from \(habits.count) total habits")
+        return activeHabits
     }
     
     var activeGoals: [Goal] {
-        return goals.filter { $0.status != .completed }
+        let activeGoalsList = goals.filter { $0.status != .completed }
+        print("🏆 activeGoals computed: \(activeGoalsList.count) from \(self.goals.count) total goals")
+        return activeGoalsList
     }
     
     var activeProjects: [Project] {
@@ -424,20 +439,27 @@ class AppState: ObservableObject {
                 self?.isLoggedIn = isAuthenticated
                 
                 if isAuthenticated {
+                    // Get the compound Microsoft user ID
+                    let msalUserId = self?.authService.userId ?? "demo-user"
+                    
+                    // Extract simple user ID for backend compatibility
+                    // Microsoft returns IDs like: "2da56370-78bc-4278-9ed3-c693615ba407.e98c967d-d833-4bef-b319-9a388d2cedcd"  
+                    // But backend stores data under: "2da56370-78bc-4278-9ed3-c693615ba407"
+                    let simpleUserId = AppState.extractSimpleUserId(from: msalUserId)
+                    
                     // Update user info from MSAL
-                    self?.userId = self?.authService.userId ?? "demo-user"
+                    self?.userId = simpleUserId // Use simple ID for backend calls
                     self?.userName = self?.authService.userDisplayName ?? "User"
                     self?.userEmail = self?.authService.userEmail ?? ""
                     
-                    // Use the Microsoft user ID from MSAL authentication
-                    // Your actual user ID: 2da56370-78bc-4278-9ed3-c693615ba407
-                    self?.apiService.currentUserId = self?.userId ?? "demo-user"
+                    // Use the simple user ID for backend API calls
+                    self?.apiService.currentUserId = simpleUserId
                     
                     // Debug user ID information
                     print("👤 User authentication details:")
                     print("   📧 Email: \(self?.userEmail ?? "none")")
-                    print("   🆔 MSAL User ID: \(self?.userId ?? "none")")
-                    print("   🔗 Backend User ID: \(self?.userId ?? "none")")
+                    print("   🆔 MSAL User ID: \(msalUserId)")
+                    print("   🔗 Backend User ID: \(simpleUserId)")
                     
                     // Get authentication token and set it in API service  
                     self?.updateAuthToken()
@@ -576,5 +598,19 @@ enum AddItemType: CaseIterable {
         case .goal: return .purple
         case .project: return .orange
         }
+    }
+    
+    // MARK: - Helper Functions
+    
+    /// Extract simple user ID from compound Microsoft account ID
+    /// Microsoft returns IDs like: "2da56370-78bc-4278-9ed3-c693615ba407.e98c967d-d833-4bef-b319-9a388d2cedcd"
+    /// But backend data is stored under: "2da56370-78bc-4278-9ed3-c693615ba407"
+    static func extractSimpleUserId(from compoundId: String) -> String {
+        // Split by the first dot and return the first part
+        if let dotIndex = compoundId.firstIndex(of: ".") {
+            return String(compoundId[..<dotIndex])
+        }
+        // If no dot found, return the original ID
+        return compoundId
     }
 }
