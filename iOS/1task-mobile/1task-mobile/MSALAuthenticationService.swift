@@ -2,6 +2,7 @@ import Foundation
 import UIKit
 import Combine
 import MSAL
+import Network
 
 // MARK: - Mock MSAL Types (fallback when real MSAL fails)
 struct MockMSALAccount {
@@ -56,7 +57,9 @@ class MSALAuthenticationService: ObservableObject {
         guard isValidGuid else {
             let errorMessage = "Invalid Client ID format: \(kClientID)"
             print("❌ \(errorMessage)")
-            self.errorMessage = errorMessage
+            DispatchQueue.main.async {
+                self.errorMessage = errorMessage
+            }
             return
         }
         
@@ -76,7 +79,10 @@ class MSALAuthenticationService: ObservableObject {
             print("❌ MSAL Setup Error: \(error)")
             print("❌ Error User Info: \(error.userInfo)")
             print("❌ Full Error Description: \(errorMessage)")
-            self.errorMessage = errorMessage
+            
+            DispatchQueue.main.async {
+                self.errorMessage = errorMessage
+            }
         }
     }
     
@@ -98,14 +104,46 @@ class MSALAuthenticationService: ObservableObject {
     
     // MARK: - Authentication Methods
     func signIn() {
-        // First test network connectivity, then attempt sign-in
-        print("🔄 Testing network connectivity before authentication...")
-        testNetworkConnectivity()
+        print("🔄 Starting real MSAL authentication...")
         
-        // Delay sign-in to allow network test to complete
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-            self.signInWithRetry(attempt: 1)
+        // Reset any mock auth state
+        isUsingMockAuth = false
+        currentMockUser = nil
+        
+        // Check if we can present UI safely
+        if !canPresentAuthenticationUI() {
+            print("⚠️ Cannot present authentication UI - waiting for safe state...")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                self.signIn() // Retry after delay
+            }
+            return
         }
+        
+        // Proceed with MSAL sign-in
+        signInWithRetry(attempt: 1)
+    }
+    
+    private func canPresentAuthenticationUI() -> Bool {
+        guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+              let rootViewController = windowScene.windows.first?.rootViewController else {
+            print("⚠️ No root view controller available")
+            return false
+        }
+        
+        // Check if any modal is already being presented
+        if let presentedVC = rootViewController.presentedViewController {
+            print("⚠️ Another view controller is being presented: \(type(of: presentedVC))")
+            
+            // If it's an alert, dismiss it safely
+            if presentedVC is UIAlertController {
+                print("🔧 Dismissing existing alert to make room for authentication...")
+                presentedVC.dismiss(animated: true)
+                return false // Wait for dismissal to complete
+            }
+            return false
+        }
+        
+        return true
     }
     
     private func signInWithRetry(attempt: Int) {
@@ -146,6 +184,17 @@ class MSALAuthenticationService: ObservableObject {
                     print("   Error Description: \(nsError.localizedDescription)")
                     print("   Error User Info: \(nsError.userInfo)")
                     
+                    // Check network connectivity for network-related errors
+                    if nsError.domain == NSURLErrorDomain {
+                        let isConnected = self?.checkNetworkConnectivity() ?? false
+                        print("🌐 Network connectivity check: \(isConnected ? "Connected" : "No Connection")")
+                    }
+                    
+                    // Check for physical device specific error and handle it
+                    if self?.handlePhysicalDeviceAuthenticationError(error: nsError) == true {
+                        return // Error handled by device-specific handler
+                    }
+                    
                     // Check if this is actually a successful auth with scope mismatch
                     if nsError.domain == "MSALErrorDomain" && 
                        nsError.code == -50003 && 
@@ -169,12 +218,23 @@ class MSALAuthenticationService: ObservableObject {
                     }
                     
                     // Check if this is a network error that we can retry
-                    if nsError.domain == "MSALErrorDomain" && 
-                       (nsError.code == -50003 || nsError.code == -50004) && 
+                    let isRetryableError = (
+                        // MSAL network errors
+                        (nsError.domain == "MSALErrorDomain" && 
+                         (nsError.code == -50003 || nsError.code == -50004)) ||
+                        // URLSession network errors
+                        (nsError.domain == NSURLErrorDomain && 
+                         (nsError.code == NSURLErrorNetworkConnectionLost || 
+                          nsError.code == NSURLErrorTimedOut ||
+                          nsError.code == NSURLErrorNotConnectedToInternet))
+                    )
+                    
+                    if isRetryableError && 
                        attempt < maxAttempts &&
                        nsError.userInfo["MSALInvalidResultKey"] == nil { // Only retry if no result
                         
-                        print("🔄 Network error detected, retrying in 2 seconds...")
+                        print("🔄 Retryable network error detected, retrying in 2 seconds...")
+                        print("🔄 Will check connectivity before retry...")
                         DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
                             self?.signInWithRetry(attempt: attempt + 1)
                         }
@@ -327,14 +387,23 @@ class MSALAuthenticationService: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
     // MARK: - User Info Properties
     var userDisplayName: String {
+        if isUsingMockAuth, let mockUser = currentMockUser {
+            return mockUser.username?.components(separatedBy: "@").first?.capitalized ?? "Demo User"
+        }
         return currentUser?.username?.components(separatedBy: "@").first?.capitalized ?? "Unknown User"
     }
     
     var userId: String {
+        if isUsingMockAuth, let mockUser = currentMockUser {
+            return mockUser.identifier
+        }
         return currentUser?.homeAccountId?.identifier ?? "unknown"
     }
     
     var userEmail: String {
+        if isUsingMockAuth, let mockUser = currentMockUser {
+            return mockUser.username ?? "demo@onetaskassistant.com"
+        }
         return currentUser?.username ?? ""
     }
     
@@ -630,5 +699,142 @@ class MSALAuthenticationService: ObservableObject {
         }
         
         return nil
+    }
+    
+    // MARK: - Web-View Only Authentication (Broker Bypass)
+    func authenticateWithWebViewOnly() {
+        print("🌐 Starting web-view-only authentication (bypassing Microsoft Authenticator broker)...")
+        
+        guard let applicationContext = self.applicationContext else {
+            DispatchQueue.main.async {
+                self.errorMessage = "Authentication service not initialized"
+            }
+            return
+        }
+        
+        guard canPresentAuthenticationUI() else {
+            print("⚠️ UI not ready for web-view authentication")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                self.authenticateWithWebViewOnly()
+            }
+            return
+        }
+        
+        guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+              let rootViewController = windowScene.windows.first?.rootViewController else {
+            DispatchQueue.main.async {
+                self.errorMessage = "Cannot access app window for authentication"
+            }
+            return
+        }
+        
+        // Configure web view parameters to explicitly avoid broker
+        let webViewParameters = MSALWebviewParameters(authPresentationViewController: rootViewController)
+        webViewParameters.webviewType = .wkWebView  // Force WKWebView, not system browser
+        
+        // Use standard scopes but with web-view only
+        let parameters = MSALInteractiveTokenParameters(scopes: kScopes, webviewParameters: webViewParameters)
+        parameters.promptType = .login  // Force fresh login to avoid cached tokens
+        
+        print("🌐 Configured for pure web-view authentication")
+        print("   Scopes: \(kScopes)")
+        print("   WebView Type: WKWebView (no system browser)")
+        print("   Prompt Type: Login (fresh authentication)")
+        
+        DispatchQueue.main.async {
+            self.isLoading = true
+            self.errorMessage = "Authenticating with web view (no broker)..."
+        }
+        
+        applicationContext.acquireToken(with: parameters) { [weak self] (result, error) in
+            DispatchQueue.main.async {
+                self?.isLoading = false
+                
+                if let authError = error as NSError? {
+                    print("❌ Web-view authentication failed:")
+                    print("   Domain: \(authError.domain)")
+                    print("   Code: \(authError.code)")
+                    print("   Description: \(authError.localizedDescription)")
+                    
+                    // If it's still a keychain/broker error, provide clear guidance
+                    if authError.code == -50000 && "\(authError.userInfo)".contains("broker") {
+                        self?.errorMessage = """
+                        Still getting broker conflicts. 
+                        
+                        This app needs keychain entitlements to work with Microsoft Authenticator.
+                        Use Demo Login to continue testing.
+                        """
+                    } else if authError.domain == NSURLErrorDomain {
+                        self?.errorMessage = "Network error during web authentication. Check internet connection."
+                    } else {
+                        self?.errorMessage = "Web-view authentication failed: \(authError.localizedDescription)"
+                    }
+                    return
+                }
+                
+                if let result = result {
+                    print("✅ Web-view-only authentication successful!")
+                    print("   User: \(result.account.username ?? "unknown")")
+                    print("   Account ID: \(result.account.homeAccountId?.identifier ?? "unknown")")
+                    
+                    self?.currentUser = result.account
+                    self?.isAuthenticated = true
+                    self?.errorMessage = nil
+                    
+                    print("🎉 Successfully authenticated without broker conflicts!")
+                }
+            }
+        }
+    }
+    
+    // MARK: - Entitlement Diagnostics
+    func diagnoseKeychainEntitlements() -> String {
+        var diagnosis = "🔍 KEYCHAIN ENTITLEMENT DIAGNOSIS:\n\n"
+        
+        // Check main bundle entitlements
+        if let path = Bundle.main.path(forResource: "Entitlements", ofType: "plist"),
+           let entitlements = NSDictionary(contentsOfFile: path) {
+            diagnosis += "📱 Found Entitlements.plist\n"
+            
+            if let keychainGroups = entitlements["keychain-access-groups"] as? [String] {
+                diagnosis += "🔑 Keychain Access Groups: \(keychainGroups.count)\n"
+                for group in keychainGroups {
+                    diagnosis += "   - \(group)\n"
+                }
+            } else {
+                diagnosis += "⚠️ No keychain-access-groups found\n"
+            }
+            
+            if let appGroups = entitlements["com.apple.security.application-groups"] as? [String] {
+                diagnosis += "👥 App Groups: \(appGroups.count)\n"
+                for group in appGroups {
+                    diagnosis += "   - \(group)\n"
+                }
+            } else {
+                diagnosis += "⚠️ No application groups found\n"
+            }
+        } else {
+            diagnosis += "❌ No Entitlements.plist found\n"
+        }
+        
+        // Check if Microsoft Authenticator is installed
+        if UIApplication.shared.canOpenURL(URL(string: "msauth://")!) {
+            diagnosis += "\n✅ Microsoft Authenticator is installed\n"
+            diagnosis += "   - This is NOT the problem!\n"
+            diagnosis += "   - The issue is keychain entitlements\n"
+        } else {
+            diagnosis += "\n⚠️ Microsoft Authenticator not detected\n"
+            diagnosis += "   - Error -34018 still indicates entitlement issue\n"
+        }
+        
+        // Recommendations
+        diagnosis += "\n🔧 RECOMMENDATIONS:\n"
+        diagnosis += "1. Use 'Web-View Only' authentication (bypasses broker)\n"
+        diagnosis += "2. Add proper keychain entitlements if you want SSO\n"
+        diagnosis += "3. Demo Login works perfectly for testing\n"
+        
+        diagnosis += "\n✅ KEEP Microsoft Authenticator - it's not the issue!"
+        
+        return diagnosis
     }
 }

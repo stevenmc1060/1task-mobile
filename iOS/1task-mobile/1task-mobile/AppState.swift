@@ -839,8 +839,8 @@ class AppState: ObservableObject {
     }
     
     func loginAsDemo() {
-        // Demo user login (bypasses MSAL) - use your actual user ID for testing
-        login(userId: "2da56370-78bc-4278-9ed3-c693615ba407", userName: "Steve McPherson (Demo)")
+        // Use the MSAL service's demo authentication for physical device compatibility
+        authService.signInAsDemo()
     }
     
     func login(userId: String, userName: String) {

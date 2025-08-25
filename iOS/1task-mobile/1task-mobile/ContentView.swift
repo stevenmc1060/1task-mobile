@@ -34,10 +34,72 @@ struct ContentView: View {
                 .padding(.horizontal, 40)
             
             if let error = appState.errorMessage {
-                Text(error)
-                    .foregroundColor(.red)
-                    .font(.caption)
-                    .padding()
+                VStack(spacing: 8) {
+                    Text(error)
+                        .foregroundColor(.red)
+                        .font(.caption)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal)
+                    
+                    // Show retry options for authentication errors
+                    if error.contains("authentication") || error.contains("Device") || error.contains("-50000") || error.contains("Keychain") || error.contains("broker key") {
+                        VStack(spacing: 8) {
+                            // First row - primary recovery options
+                            HStack(spacing: 12) {
+                                Button("Fix Broker Key") {
+                                    appState.authService.handleBrokerKeyError()
+                                }
+                                .font(.caption2)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(Color.green.opacity(0.2))
+                                .foregroundColor(.green)
+                                .cornerRadius(6)
+                                
+                                Button("Web-View Only") {
+                                    appState.authService.authenticateWithWebViewOnly()
+                                }
+                                .font(.caption2)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(Color.blue.opacity(0.2))
+                                .foregroundColor(.blue)
+                                .cornerRadius(6)
+                                
+                                Button("Demo Login") {
+                                    appState.loginAsDemo()
+                                }
+                                .font(.caption2)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(Color.purple.opacity(0.2))
+                                .foregroundColor(.purple)
+                                .cornerRadius(6)
+                            }
+                            
+                            // Second row - advanced options
+                            if error.contains("-34018") || error.contains("broker key") {
+                                VStack(spacing: 4) {
+                                    Text("⚠️ Keychain entitlement issue detected. Try 'Web-View Only' - Microsoft Authenticator is not the problem")
+                                        .font(.caption2)
+                                        .foregroundColor(.orange)
+                                        .multilineTextAlignment(.center)
+                                    
+                                    Button("Show Solution Guide") {
+                                        appState.authService.showDeviceSpecificGuidance()
+                                    }
+                                    .font(.caption2)
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 2)
+                                    .background(Color.yellow.opacity(0.2))
+                                    .foregroundColor(.orange)
+                                    .cornerRadius(4)
+                                }
+                            }
+                        }
+                    }
+                }
+                .padding()
             }
             
             Spacer()
@@ -45,7 +107,7 @@ struct ContentView: View {
             // Simple button without trailing closure
             SignInButton(appState: appState)
             
-            // Temporary demo login button for testing
+            // Demo login button for testing and device compatibility
             Button("Demo Login (Skip Auth)") {
                 appState.loginAsDemo()
             }
@@ -54,6 +116,12 @@ struct ContentView: View {
             .foregroundColor(.white)
             .cornerRadius(8)
             .font(.caption)
+            
+            Text("Use Demo Login if Microsoft authentication fails on your device")
+                .font(.caption2)
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 20)
             
             Text("Secure OAuth 2.0 authentication")
                 .font(.caption)
