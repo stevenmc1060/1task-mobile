@@ -104,6 +104,9 @@ class MSALAuthenticationService: ObservableObject {
     
     // MARK: - Authentication Methods
     func signIn() {
+        print("🔄 MSALAuthenticationService.signIn() called!")
+        print("   Current state: isAuthenticated=\(isAuthenticated), isLoading=\(isLoading)")
+        print("   Application context: \(applicationContext != nil ? "available" : "nil")")
         print("🔄 Starting real MSAL authentication...")
         
         // Reset any mock auth state
@@ -333,17 +336,17 @@ class MSALAuthenticationService: ObservableObject {
     func getAccessToken() -> AnyPublisher<String, Error> {
         return Future<String, Error> { [weak self] promise in
             guard let self = self else {
-                promise(.failure(NSError(domain: "MSALError", code: -1, userInfo: [NSLocalizedDescriptionKey: "Authentication service unavailable"])))
+                promise(.failure(NSError(domain: "MSAL", code: -1, userInfo: [NSLocalizedDescriptionKey: "Authentication service unavailable"])))
                 return
             }
             
             guard let applicationContext = self.applicationContext else {
-                promise(.failure(NSError(domain: "MSALError", code: -1, userInfo: [NSLocalizedDescriptionKey: "Application context not initialized"])))
+                promise(.failure(NSError(domain: "MSAL", code: -1, userInfo: [NSLocalizedDescriptionKey: "Application context not initialized"])))
                 return
             }
             
             guard let account = self.currentUser else {
-                promise(.failure(NSError(domain: "MSALError", code: -1, userInfo: [NSLocalizedDescriptionKey: "User not authenticated"])))
+                promise(.failure(NSError(domain: "MSAL", code: -1, userInfo: [NSLocalizedDescriptionKey: "User not authenticated"])))
                 return
             }
             
@@ -356,7 +359,7 @@ class MSALAuthenticationService: ObservableObject {
                 }
                 
                 guard let result = result else {
-                    promise(.failure(NSError(domain: "MSALError", code: -1, userInfo: [NSLocalizedDescriptionKey: "No token result"])))
+                    promise(.failure(NSError(domain: "MSAL", code: -1, userInfo: [NSLocalizedDescriptionKey: "No token result"])))
                     return
                 }
                 
@@ -511,7 +514,7 @@ class MSALAuthenticationService: ObservableObject {
                             // If no photo available, create a default avatar with user's initials
                             self.fetchUserProfile().sink(
                                 receiveCompletion: { completion in
-                                    if case .failure(let error) = completion {
+                                    if case .failure(_) = completion {
                                         // Create a generic default avatar
                                         let defaultImage = self.createDefaultAvatar(with: "?")
                                         promise(.success(defaultImage))
@@ -701,6 +704,72 @@ class MSALAuthenticationService: ObservableObject {
         return nil
     }
     
+    // MARK: - Network and Device Error Handling
+    private func checkNetworkConnectivity() -> Bool {
+        print("🌐 Checking network connectivity...")
+        
+        // Simple network check using URLSession
+        let semaphore = DispatchSemaphore(value: 0)
+        var isConnected = false
+        
+        let task = URLSession.shared.dataTask(with: URL(string: "https://www.microsoft.com")!) { data, response, error in
+            if let httpResponse = response as? HTTPURLResponse {
+                isConnected = httpResponse.statusCode == 200
+            } else if error != nil {
+                isConnected = false
+            }
+            semaphore.signal()
+        }
+        
+        task.resume()
+        _ = semaphore.wait(timeout: .now() + 5.0) // Wait up to 5 seconds
+        
+        print("🌐 Network connectivity: \(isConnected ? "Connected" : "Not Connected")")
+        return isConnected
+    }
+    
+    private func handlePhysicalDeviceAuthenticationError(error: NSError) -> Bool {
+        print("📱 Checking for physical device authentication errors...")
+        
+        // Handle keychain/entitlement errors that occur on physical devices
+        if error.code == -34018 || error.code == -50000 {
+            print("🔧 Detected keychain/broker error on physical device")
+            print("🎭 This device has keychain entitlement restrictions. Switching to demo mode immediately...")
+            
+            DispatchQueue.main.async {
+                self.errorMessage = "Microsoft authentication not available on this device. Switching to demo mode..."
+                
+                // Switch to demo mode after a brief delay to show the message
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                    self.signInAsDemo()
+                }
+            }
+            
+            return true // Indicate we handled it
+        }
+        
+        // Handle network connection errors
+        if error.domain == NSURLErrorDomain {
+            print("🌐 Network error detected on physical device")
+            
+            DispatchQueue.main.async {
+                self.errorMessage = """
+                Network connection error: \(error.localizedDescription)
+                
+                Please check:
+                • Internet connection
+                • Firewall settings
+                • VPN configuration
+                
+                Try 'Demo Login' if network issues persist.
+                """
+            }
+            return true
+        }
+        
+        return false
+    }
+    
     // MARK: - Web-View Only Authentication (Broker Bypass)
     func authenticateWithWebViewOnly() {
         print("🌐 Starting web-view-only authentication (bypassing Microsoft Authenticator broker)...")
@@ -736,6 +805,9 @@ class MSALAuthenticationService: ObservableObject {
         let parameters = MSALInteractiveTokenParameters(scopes: kScopes, webviewParameters: webViewParameters)
         parameters.promptType = .login  // Force fresh login to avoid cached tokens
         
+        // Try to disable broker explicitly
+        parameters.extraQueryParameters = ["prompt": "login", "response_mode": "query"]
+        
         print("🌐 Configured for pure web-view authentication")
         print("   Scopes: \(kScopes)")
         print("   WebView Type: WKWebView (no system browser)")
@@ -743,7 +815,7 @@ class MSALAuthenticationService: ObservableObject {
         
         DispatchQueue.main.async {
             self.isLoading = true
-            self.errorMessage = "Authenticating with web view (no broker)..."
+            self.errorMessage = "Trying web-view authentication (bypassing broker)..."
         }
         
         applicationContext.acquireToken(with: parameters) { [weak self] (result, error) in
@@ -755,19 +827,38 @@ class MSALAuthenticationService: ObservableObject {
                     print("   Domain: \(authError.domain)")
                     print("   Code: \(authError.code)")
                     print("   Description: \(authError.localizedDescription)")
+                    print("   UserInfo: \(authError.userInfo)")
                     
-                    // If it's still a keychain/broker error, provide clear guidance
-                    if authError.code == -50000 && "\(authError.userInfo)".contains("broker") {
-                        self?.errorMessage = """
-                        Still getting broker conflicts. 
+                    // If it's still a keychain/broker error, provide clear guidance and fallback to demo
+                    if authError.code == -50000 || authError.code == -34018 {
+                        print("🎭 Keychain/broker error persists. Auto-falling back to demo authentication...")
+                        self?.errorMessage = "Microsoft authentication unavailable on this device. Using demo mode..."
                         
-                        This app needs keychain entitlements to work with Microsoft Authenticator.
-                        Use Demo Login to continue testing.
-                        """
+                        // Automatically fall back to demo login
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                            self?.signInAsDemo()
+                        }
+                        return
+                        
+                    } else if "\(authError.userInfo)".contains("broker") {
+                        print("🎭 Broker conflict persists. Auto-falling back to demo authentication...")
+                        self?.errorMessage = "Microsoft authentication broker conflict. Using demo mode..."
+                        
+                        // Automatically fall back to demo login
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                            self?.signInAsDemo()
+                        }
+                        return
+                        
                     } else if authError.domain == NSURLErrorDomain {
-                        self?.errorMessage = "Network error during web authentication. Check internet connection."
+                        self?.errorMessage = "Network error during web authentication. Check internet connection or try demo mode."
                     } else {
-                        self?.errorMessage = "Web-view authentication failed: \(authError.localizedDescription)"
+                        // For other errors, also suggest demo mode
+                        self?.errorMessage = """
+                        Web-view authentication failed: \(authError.localizedDescription)
+                        
+                        Consider using demo mode to test the app.
+                        """
                     }
                     return
                 }
@@ -836,5 +927,79 @@ class MSALAuthenticationService: ObservableObject {
         diagnosis += "\n✅ KEEP Microsoft Authenticator - it's not the issue!"
         
         return diagnosis
+    }
+    
+    // MARK: - Error Handling Methods
+    func handleBrokerKeyError() {
+        print("🔧 Handling broker key error...")
+        
+        // Clear any cached authentication state
+        DispatchQueue.main.async {
+            self.errorMessage = "Attempting to fix broker key issues..."
+            self.isLoading = true
+        }
+        
+        // Sign out to clear any corrupted state
+        signOut()
+        
+        // Wait a moment then try web-view only authentication
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            self.authenticateWithWebViewOnly()
+        }
+    }
+    
+    func showDeviceSpecificGuidance() {
+        print("📱 Showing device-specific guidance for authentication issues")
+        
+        let guidance = diagnoseKeychainEntitlements()
+        
+        DispatchQueue.main.async {
+            // For now, we'll set this as the error message
+            // In a production app, you might want to show this in a dedicated view or alert
+            self.errorMessage = """
+            AUTHENTICATION GUIDANCE:
+            
+            The error you're seeing is related to keychain entitlements, not Microsoft Authenticator.
+            
+            SOLUTION: Use 'Web-View Only' authentication which bypasses the broker completely.
+            
+            OR use 'Demo Login' to test app functionality.
+            
+            Technical details:
+            \(guidance)
+            """
+        }
+    }
+    
+    // MARK: - Demo Authentication
+    func signInAsDemo() {
+        print("🎭 Starting demo authentication (mock login)...")
+        print("🎯 Demo mode provides full app functionality for testing")
+        
+        DispatchQueue.main.async {
+            self.isLoading = true
+            self.errorMessage = "Activating demo mode - you'll have full access to all features..."
+        }
+        
+        // Create a mock user account for demo purposes
+        let mockAccount = MockMSALAccount(
+            username: "demo@onetaskassistant.com",
+            identifier: "demo-account-id-12345"
+        )
+        
+        // Simulate authentication delay
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+            self.isUsingMockAuth = true
+            self.currentMockUser = mockAccount
+            self.currentUser = nil // Clear any real MSAL account
+            self.isAuthenticated = true
+            self.isLoading = false
+            self.errorMessage = nil
+            
+            print("✅ Demo authentication successful!")
+            print("   Demo User: \(mockAccount.username ?? "unknown")")
+            print("   Demo Account ID: \(mockAccount.identifier)")
+            print("🎉 You can now use all app features in demo mode!")
+        }
     }
 }

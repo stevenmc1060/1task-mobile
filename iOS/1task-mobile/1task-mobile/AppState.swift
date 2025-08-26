@@ -558,7 +558,7 @@ class AppState: ObservableObject {
         apiService.updateTask(task)
             .receive(on: DispatchQueue.main)
             .sink(
-                receiveCompletion: { [weak self] completion in
+                receiveCompletion: { completion in
                     if case .failure(let error) = completion {
                         print("⚠️ Task update API failed: \(error.localizedDescription)")
                         // Don't show error for task updates - the local update already happened
@@ -835,7 +835,10 @@ class AppState: ObservableObject {
     
     // MARK: - Login Management
     func loginWithMSAL() {
+        print("🔄 AppState.loginWithMSAL() called")
+        print("   Auth service state: isAuthenticated=\(authService.isAuthenticated), isLoading=\(authService.isLoading)")
         authService.signIn()
+        print("✅ Called authService.signIn()")
     }
     
     func loginAsDemo() {

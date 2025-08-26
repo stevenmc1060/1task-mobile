@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Keychain Access Groups - Required for MSAL -->
+    <key>keychain-access-groups</key>
+    <array>
+        <string>$(AppIdentifierPrefix)com.onetaskassistant.mobile</string>
+        <string>$(AppIdentifierPrefix)com.microsoft.adalcache</string>
+    </array>
+    
+    <!-- App Groups - For sharing keychain data -->
+    <key>com.apple.security.application-groups</key>
+    <array>
+        <string>group.com.onetaskassistant.mobile.shared</string>
+    </array>
+    
+    <!-- Associated Domains - For Microsoft redirects -->
+    <key>com.apple.developer.associated-domains</key>
+    <array>
+        <string>applinks:login.microsoftonline.com</string>
+    </array>
+</dict>
+</plist>

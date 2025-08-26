@@ -138,20 +138,70 @@ struct SignInButton: View {
     let appState: AppState
     
     var body: some View {
-        Text("Sign in with Microsoft")
-            .font(.headline)
-            .foregroundColor(.white)
-            .padding()
-            .background(Color.blue)
-            .cornerRadius(12)
-            .onTapGesture {
-                handleSignIn()
+        VStack(spacing: 16) {
+            // Primary Microsoft Sign-In Button
+            Button(action: {
+                handleMicrosoftSignIn()
+            }) {
+                HStack {
+                    Image(systemName: "person.circle.fill")
+                    Text("Sign in with Microsoft")
+                        .font(.headline)
+                        .fontWeight(.medium)
+                }
+                .foregroundColor(.white)
+                .padding()
+                .frame(maxWidth: .infinity)
+                .background(Color.blue)
+                .cornerRadius(12)
             }
+            
+            // Alternative Demo Sign-In Button
+            Button(action: {
+                handleDemoSignIn()
+            }) {
+                HStack {
+                    Image(systemName: "theatermasks")
+                    Text("Continue with Demo Account")
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                }
+                .foregroundColor(.purple)
+                .padding()
+                .frame(maxWidth: .infinity)
+                .background(Color.purple.opacity(0.1))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(Color.purple.opacity(0.3), lineWidth: 1)
+                )
+                .cornerRadius(12)
+            }
+            
+            Text("Demo mode gives you full access to all features - perfect for testing the app!")
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 8)
+        }
     }
     
-    private func handleSignIn() {
+    private func handleMicrosoftSignIn() {
+        print("🔘 Microsoft sign in button tapped!")
+        print("   AppState available: \(appState)")
+        print("   Auth service available: \(appState.authService)")
+        
         // Call your working Microsoft authentication
         appState.loginWithMSAL()
+        print("✅ Called appState.loginWithMSAL()")
+    }
+    
+    private func handleDemoSignIn() {
+        print("🎭 Demo sign in button tapped!")
+        print("   AppState available: \(appState)")
+        
+        // Call demo authentication
+        appState.loginAsDemo()
+        print("✅ Called appState.loginAsDemo()")
     }
 }
 
