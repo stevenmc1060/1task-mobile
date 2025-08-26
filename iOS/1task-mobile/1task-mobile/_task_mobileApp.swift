@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import MSAL
 
 @main
 struct _task_mobileApp: App {
@@ -66,6 +67,11 @@ struct _task_mobileApp: App {
                 }
             } message: {
                 Text(appState.errorMessage ?? "An unknown error occurred")
+            }
+            .onOpenURL { url in
+                // Handle MSAL redirects for authentication
+                print("🔗 Received URL: \(url)")
+                MSALPublicClientApplication.handleMSALResponse(url, sourceApplication: nil)
             }
         }
     }

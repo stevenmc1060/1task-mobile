@@ -48,6 +48,11 @@ class MSALAuthenticationService: ObservableObject {
         print("   Redirect URI: '\(kRedirectUri)'")
         print("   Authority: '\(kAuthority)'")
         
+        // 🚫 DISABLE BROKER: Force in-app web authentication only
+        // This prevents keychain/broker errors on physical devices
+        MSALGlobalConfig.brokerAvailability = .none
+        print("🚫 Broker disabled - using in-app web authentication only")
+        
         // Validate Client ID format (should be a GUID)
         let guidPattern = "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
         let guidRegex = try? NSRegularExpression(pattern: guidPattern)
@@ -67,10 +72,15 @@ class MSALAuthenticationService: ObservableObject {
             // Create configuration with explicit redirect URI and authority
             let pcaConfig = MSALPublicClientApplicationConfig(clientId: kClientID, redirectUri: kRedirectUri, authority: try MSALAuthority(url: URL(string: kAuthority)!))
             
+            // 🔑 CRITICAL FIX: Set keychain sharing group for physical device
+            // This prevents -34018 errors on real iPhones with Personal Team builds
+            pcaConfig.cacheConfig.keychainSharingGroup = "com.onetaskassistant.mobile"
+            
             print("🔧 Created MSAL config with explicit redirect URI and authority")
+            print("🔑 Set keychain sharing group: com.onetaskassistant.mobile")
             
             self.applicationContext = try MSALPublicClientApplication(configuration: pcaConfig)
-            print("✅ MSAL application context created successfully with full config")
+            print("✅ MSAL application context created successfully with full config and keychain group")
             
         } catch let error as NSError {
             let errorMessage = "Failed to initialize MSAL: \(error.localizedDescription)"
@@ -167,6 +177,9 @@ class MSALAuthenticationService: ObservableObject {
         }
         
         let webViewParameters = MSALWebviewParameters(authPresentationViewController: rootViewController)
+        // 🌐 Force in-app web authentication (ASWebAuthenticationSession/WKWebView)
+        webViewParameters.webviewType = .default // Uses ASWebAuthenticationSession under the hood
+        
         let parameters = MSALInteractiveTokenParameters(scopes: kScopes, webviewParameters: webViewParameters)
         
         // Add extra parameters for better network handling
@@ -257,6 +270,18 @@ class MSALAuthenticationService: ObservableObject {
                         default:
                             friendlyError = "Authentication error (\(nsError.code)): \(nsError.localizedDescription)"
                         }
+                    }
+                    
+                    // If we still have any network-related error that wasn't handled above, fall back to demo mode
+                    if nsError.domain == NSURLErrorDomain || 
+                       (nsError.domain == "MSALErrorDomain" && nsError.code == -50004) {
+                        print("🎭 Network/timeout error not resolved. Auto-falling back to demo mode...")
+                        self?.errorMessage = "Network issues with Microsoft authentication. Switching to demo mode..."
+                        
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                            self?.signInAsDemo()
+                        }
+                        return
                     }
                     
                     self?.errorMessage = friendlyError
@@ -626,8 +651,8 @@ class MSALAuthenticationService: ObservableObject {
             .store(in: &cancellables)
     }
     
-    // MARK: - Microsoft Graph API Calls
-    func fetchUserProfile() async -> (givenName: String?, profilePhoto: UIImage?) {
+    // MARK: - Microsoft Graph API Calls (Async Version)
+    func fetchUserProfileAsync() async -> (givenName: String?, profilePhoto: UIImage?) {
         guard let accessToken = await getAccessTokenAsync() else {
             print("❌ No access token available for Graph API")
             return (nil, nil)
@@ -751,18 +776,15 @@ class MSALAuthenticationService: ObservableObject {
         // Handle network connection errors
         if error.domain == NSURLErrorDomain {
             print("🌐 Network error detected on physical device")
+            print("🎭 Network issues with Microsoft authentication. Switching to demo mode immediately...")
             
             DispatchQueue.main.async {
-                self.errorMessage = """
-                Network connection error: \(error.localizedDescription)
+                self.errorMessage = "Network error with Microsoft authentication. Switching to demo mode..."
                 
-                Please check:
-                • Internet connection
-                • Firewall settings
-                • VPN configuration
-                
-                Try 'Demo Login' if network issues persist.
-                """
+                // Switch to demo mode after a brief delay to show the message
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                    self.signInAsDemo()
+                }
             }
             return true
         }
@@ -851,7 +873,14 @@ class MSALAuthenticationService: ObservableObject {
                         return
                         
                     } else if authError.domain == NSURLErrorDomain {
-                        self?.errorMessage = "Network error during web authentication. Check internet connection or try demo mode."
+                        print("🎭 Network error in web-view authentication. Auto-falling back to demo mode...")
+                        self?.errorMessage = "Network error during web authentication. Switching to demo mode..."
+                        
+                        // Automatically fall back to demo login for network errors too
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                            self?.signInAsDemo()
+                        }
+                        return
                     } else {
                         // For other errors, also suggest demo mode
                         self?.errorMessage = """
