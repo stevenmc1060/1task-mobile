@@ -18,6 +18,7 @@ struct TasksEditorView: View {
                 LazyVStack(spacing: 12) {
                     ForEach(appState.todaysTasks) { task in
                         TaskRowView(task: task)
+                            .environmentObject(appState)
                             .swipeActions(edge: .trailing) {
                                 Button("Delete") {
                                     appState.deleteTask(task.id)
@@ -107,17 +108,18 @@ struct AddTaskView: View {
 // TaskRowView to display individual tasks
 struct TaskRowView: View {
     let task: Task
+    @EnvironmentObject var appState: AppState
     
     var body: some View {
         HStack(spacing: 12) {
             Button(action: { 
-                // Note: Since task is not a binding, we can't toggle it directly here
-                // The completion toggle should be handled by the parent view
+                toggleTaskCompletion()
             }) {
                 Image(systemName: task.status == .completed ? "checkmark.circle.fill" : "circle")
                     .font(.title3)
                     .foregroundColor(task.status == .completed ? .green : .gray)
             }
+            .buttonStyle(PlainButtonStyle())
             
             VStack(alignment: .leading, spacing: 4) {
                 Text(task.title)
@@ -142,6 +144,24 @@ struct TaskRowView: View {
         .padding()
         .background(Color(.systemGray6))
         .cornerRadius(12)
+    }
+    
+    private func toggleTaskCompletion() {
+        var updatedTask = task
+        
+        // Toggle between completed and pending
+        if task.status == .completed {
+            updatedTask.status = .pending
+            updatedTask.completedAt = nil
+            print("🔄 Marking task as pending: \(task.title)")
+        } else {
+            updatedTask.status = .completed
+            updatedTask.completedAt = Date()
+            print("✅ Marking task as completed: \(task.title)")
+        }
+        
+        // Update the task via AppState
+        appState.updateTask(updatedTask)
     }
 }
 
