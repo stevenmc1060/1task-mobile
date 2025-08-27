@@ -653,6 +653,12 @@ class MSALAuthenticationService: ObservableObject {
     
     // MARK: - Microsoft Graph API Calls (Async Version)
     func fetchUserProfileAsync() async -> (givenName: String?, profilePhoto: UIImage?) {
+        // If we're using mock authentication (demo mode), return demo data
+        if isUsingMockAuth {
+            print("🎭 Using demo mode - returning demo profile data")
+            return ("Demo", nil)  // Return "Demo" as first name, no avatar for demo
+        }
+        
         guard let accessToken = await getAccessTokenAsync() else {
             print("❌ No access token available for Graph API")
             return (nil, nil)

@@ -97,15 +97,25 @@ struct DashboardView: View {
             
             // Profile button
             Button(action: { showingProfile = true }) {
-                Circle()
-                    .fill(Color.blue.gradient)
-                    .frame(width: 44, height: 44)
-                    .overlay(
-                        Text(String(appState.userFirstName.prefix(1)))
-                            .font(.headline)
-                            .fontWeight(.semibold)
-                            .foregroundColor(.white)
-                    )
+                if let userAvatar = appState.userAvatar {
+                    // Show user's actual profile photo
+                    Image(uiImage: userAvatar)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: 44, height: 44)
+                        .clipShape(Circle())
+                } else {
+                    // Show initials fallback
+                    Circle()
+                        .fill(Color.blue.gradient)
+                        .frame(width: 44, height: 44)
+                        .overlay(
+                            Text(String(appState.userFirstName.prefix(1)))
+                                .font(.headline)
+                                .fontWeight(.semibold)
+                                .foregroundColor(.white)
+                        )
+                }
             }
         }
         .padding(.top)

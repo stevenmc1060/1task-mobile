@@ -126,6 +126,24 @@ class AppState: ObservableObject {
         
         // Subscribe to authentication changes
         setupAuthenticationSubscription()
+        
+        // Check if user is already authenticated after subscription setup
+        // This handles the case where MSAL finds an existing cached account during initialization
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            print("🔍 Checking authentication state after AppState init...")
+            print("   AuthService.isAuthenticated: \(self.authService.isAuthenticated)")
+            print("   AppState.isLoggedIn: \(self.isLoggedIn)")
+            print("   Current userFirstName: '\(self.userFirstName)'")
+            print("   Current userName: '\(self.userName)'")
+            
+            if self.authService.isAuthenticated && !self.isLoggedIn {
+                print("🔍 Found existing authentication after AppState init - updating profile data")
+                self.handleExistingAuthentication()
+            } else if self.authService.isAuthenticated && self.isLoggedIn && self.userFirstName.isEmpty {
+                print("🔍 Already logged in but missing profile data - fetching it")
+                self.fetchUserProfileData()
+            }
+        }
     }
     
     
@@ -752,6 +770,82 @@ class AppState: ObservableObject {
             .store(in: &cancellables)
     }
     
+    // MARK: - Handle Existing Authentication
+    private func handleExistingAuthentication() {
+        print("🔄 Processing existing authentication state...")
+        
+        if authService.isAuthenticated {
+            // Update state from existing MSAL authentication
+            let msalUserId = authService.userId
+            let simpleUserId = AppState.extractSimpleUserId(from: msalUserId)
+            
+            self.isLoggedIn = true
+            self.userId = simpleUserId
+            self.userName = authService.userDisplayName
+            self.userEmail = authService.userEmail
+            
+            // Set API service user ID
+            self.apiService.currentUserId = simpleUserId
+            
+            print("👤 Updated from existing auth:")
+            print("   📧 Email: \(self.userEmail)")
+            print("   🆔 Backend User ID: \(simpleUserId)")
+            
+            // Update authentication token
+            updateAuthToken()
+            
+            // Fetch user profile and avatar from Microsoft Graph
+            fetchUserProfileData()
+        }
+    }
+    
+    // MARK: - User Profile Data Fetching
+    private func fetchUserProfileData() {
+        print("👤 Fetching user profile data...")
+        print("   Auth service state: isAuthenticated=\(authService.isAuthenticated), isUsingMockAuth=\(authService.isUsingMockAuth)")
+        
+        // Use @Sendable closure to avoid concurrency warnings
+        let profileTask = _Concurrency.Task { @MainActor in
+            do {
+                let (givenName, profilePhoto) = await authService.fetchUserProfileAsync()
+                
+                // Update first name if available
+                if let givenName = givenName {
+                    print("✅ Fetched user first name: \(givenName)")
+                    self.userFirstName = givenName
+                    
+                    // Also update userName to be more complete if we only had email before
+                    if self.userName.contains("@") && !self.userName.contains(" ") {
+                        self.userName = givenName
+                    }
+                } else {
+                    // Fallback to computed first name from existing userName
+                    self.userFirstName = self.computedUserFirstName
+                    print("⚠️ No first name from auth service, using computed: \(self.userFirstName)")
+                }
+                
+                // Update avatar if available
+                if let profilePhoto = profilePhoto {
+                    print("✅ Fetched user profile photo")
+                    self.userAvatar = profilePhoto
+                } else {
+                    print("ℹ️ No profile photo available")
+                    self.userAvatar = nil
+                }
+                
+                print("📝 Final profile state: firstName='\(self.userFirstName)', hasAvatar=\(self.userAvatar != nil)")
+            } catch {
+                print("❌ Error fetching user profile: \(error)")
+                // Fallback to computed first name
+                self.userFirstName = self.computedUserFirstName
+                print("📝 Fallback: Set first name to computed value: \(self.userFirstName)")
+            }
+        }
+        
+        // Store the task reference to avoid warnings
+        _ = profileTask
+    }
+    
     // MARK: - Authentication Setup
     private func setupAuthenticationSubscription() {
         // Monitor authentication state changes
@@ -784,6 +878,9 @@ class AppState: ObservableObject {
                     
                     // Get authentication token and set it in API service  
                     self?.updateAuthToken()
+                    
+                    // Fetch user profile and avatar from Microsoft Graph
+                    self?.fetchUserProfileData()
                     
                 } else {
                     // Reset to demo data when signed out
@@ -875,6 +972,9 @@ class AppState: ObservableObject {
         userId = "demo-user"
         userName = "Demo User"
         userEmail = ""
+        userFirstName = "Demo"  // Set demo first name
+        userAvatar = nil        // Clear avatar
+        userProfile = nil       // Clear profile
         isLoggedIn = false
         apiService.currentUserId = "demo-user"
         
