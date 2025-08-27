@@ -142,18 +142,21 @@ struct DashboardView: View {
             
             // Quick Add Button
             Button(action: { appState.showingAddSheet = true }) {
-                VStack(spacing: 8) {
-                    Image(systemName: "plus.circle.fill")
-                        .font(.title2)
+                VStack(spacing: 6) {
+                    Image(systemName: "lightbulb.fill")
+                        .font(.title3)
                         .foregroundColor(.white)
                     
-                    Text("Add")
-                        .font(.caption)
+                    Text("Add/Ideate")
+                        .font(.caption2)
                         .fontWeight(.medium)
-                        .foregroundColor(.white)
+                        .foregroundColor(.white.opacity(0.9))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
                 }
                 .frame(maxWidth: .infinity)
-                .frame(height: 70)
+                .frame(height: 80)
+                .padding(.horizontal, 8)
                 .background(
                     LinearGradient(
                         colors: [.purple, .pink],
