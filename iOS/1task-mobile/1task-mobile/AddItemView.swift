@@ -47,6 +47,9 @@ struct AddItemView: View {
                     // Type picker
                     typePicker
                     
+                    // Chat Assistant button
+                    chatAssistantButton
+                    
                     // Title input
                     titleInput
                     
@@ -55,9 +58,6 @@ struct AddItemView: View {
                     
                     // Notes input
                     notesInput
-                    
-                    // Chat Assistant button
-                    chatAssistantButton
                     
                     Spacer(minLength: 50)
                 }
