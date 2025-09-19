@@ -29,7 +29,8 @@ class MSALAuthenticationService: ObservableObject {
     // Azure AD configuration from web frontend
     private let kClientID = "24243302-91ba-46a3-bbe2-f946278e5a33"
     private let kRedirectUri = "msauth.com.onetaskassistant.mobile://auth"
-    private let kAuthority = "https://login.microsoftonline.com/common"
+    private let kConsumerAuthority = "https://login.microsoftonline.com/consumers" // Personal accounts
+    private let kOrganizationAuthority = "https://login.microsoftonline.com/organizations" // Work/School accounts
     
     private let kScopes: [String] = [
         "User.Read"
@@ -46,7 +47,8 @@ class MSALAuthenticationService: ObservableObject {
         print("🔧 Setting up MSAL with improved configuration...")
         print("   Client ID: '\(kClientID)'")
         print("   Redirect URI: '\(kRedirectUri)'")
-        print("   Authority: '\(kAuthority)'")
+        print("   Consumer Authority: '\(kConsumerAuthority)'")
+        print("   Organization Authority: '\(kOrganizationAuthority)'")
         
         // 🚫 DISABLE BROKER: Force in-app web authentication only
         // This prevents keychain/broker errors on physical devices
@@ -69,8 +71,8 @@ class MSALAuthenticationService: ObservableObject {
         }
         
         do {
-            // Create configuration with explicit redirect URI and authority
-            let pcaConfig = MSALPublicClientApplicationConfig(clientId: kClientID, redirectUri: kRedirectUri, authority: try MSALAuthority(url: URL(string: kAuthority)!))
+            // Create configuration with explicit redirect URI and organization authority (default)
+            let pcaConfig = MSALPublicClientApplicationConfig(clientId: kClientID, redirectUri: kRedirectUri, authority: try MSALAuthority(url: URL(string: kOrganizationAuthority)!))
             
             // 🔑 CRITICAL FIX: Set keychain sharing group for physical device
             // This prevents -34018 errors on real iPhones with Personal Team builds
@@ -1035,6 +1037,183 @@ class MSALAuthenticationService: ObservableObject {
             print("   Demo User: \(mockAccount.username ?? "unknown")")
             print("   Demo Account ID: \(mockAccount.identifier)")
             print("🎉 You can now use all app features in demo mode!")
+        }
+    }
+    
+    // MARK: - Specific Account Type Authentication
+    
+    func signInWithPersonalAccount() {
+        print("🔄 Starting Personal Microsoft Account sign-in...")
+        signInWithAuthority(authority: kConsumerAuthority, accountType: "Personal")
+    }
+    
+    func signInWithWorkSchoolAccount() {
+        print("🔄 Starting Work/School Microsoft Account sign-in...")
+        signInWithAuthority(authority: kOrganizationAuthority, accountType: "Work/School")
+    }
+    
+    private func signInWithAuthority(authority: String, accountType: String) {
+        print("🔄 MSALAuthenticationService.signInWithAuthority() called for \(accountType)!")
+        print("   Authority: \(authority)")
+        print("   Current state: isAuthenticated=\(isAuthenticated), isLoading=\(isLoading)")
+        print("   Application context: \(applicationContext != nil ? "available" : "nil")")
+        
+        // Reset any mock auth state
+        isUsingMockAuth = false
+        currentMockUser = nil
+        
+        // Check if we can present UI safely
+        if !canPresentAuthenticationUI() {
+            print("⚠️ Cannot present authentication UI - waiting for safe state...")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                self.signInWithAuthority(authority: authority, accountType: accountType)
+            }
+            return
+        }
+        
+        // Proceed with MSAL sign-in using specific authority
+        signInWithAuthorityAndRetry(authority: authority, accountType: accountType, attempt: 1)
+    }
+    
+    private func signInWithAuthorityAndRetry(authority: String, accountType: String, attempt: Int) {
+        let maxAttempts = 2
+        
+        print("🔄 Starting \(accountType) Microsoft sign-in (attempt \(attempt)/\(maxAttempts))...")
+        print("   Using authority: \(authority)")
+        
+        guard let applicationContext = self.applicationContext else {
+            DispatchQueue.main.async {
+                self.errorMessage = "Application context not initialized"
+            }
+            return
+        }
+        
+        // Create web view parameters
+        guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+              let rootViewController = windowScene.windows.first?.rootViewController else {
+            DispatchQueue.main.async {
+                self.errorMessage = "No root view controller available"
+            }
+            return
+        }
+        
+        let webViewParameters = MSALWebviewParameters(authPresentationViewController: rootViewController)
+        webViewParameters.webviewType = .default
+        
+        let parameters = MSALInteractiveTokenParameters(scopes: kScopes, webviewParameters: webViewParameters)
+        
+        // Set the specific authority for this request
+        do {
+            parameters.authority = try MSALAuthority(url: URL(string: authority)!)
+        } catch {
+            DispatchQueue.main.async {
+                self.errorMessage = "Failed to create authority for \(accountType) accounts: \(error.localizedDescription)"
+            }
+            return
+        }
+        
+        // Add extra parameters for better network handling
+        parameters.promptType = .selectAccount
+        
+        DispatchQueue.main.async {
+            self.isLoading = true
+            self.errorMessage = nil
+        }
+        
+        applicationContext.acquireToken(with: parameters) { [weak self] (result, error) in
+            DispatchQueue.main.async {
+                self?.isLoading = false
+                
+                if let authError = error {
+                    let nsError = authError as NSError
+                    print("❌ \(accountType) Microsoft sign-in failed (attempt \(attempt)):")
+                    print("   Error Domain: \(nsError.domain)")
+                    print("   Error Code: \(nsError.code)")
+                    print("   Error Description: \(nsError.localizedDescription)")
+                    print("   Error User Info: \(nsError.userInfo)")
+                    
+                    // Check for physical device specific error and handle it
+                    if self?.handlePhysicalDeviceAuthenticationError(error: nsError) == true {
+                        return // Error handled by device-specific handler
+                    }
+                    
+                    // Check if this is actually a successful auth with scope mismatch
+                    if nsError.domain == "MSALErrorDomain" && 
+                       nsError.code == -50003 && 
+                       nsError.userInfo["MSALInvalidResultKey"] != nil {
+                        
+                        // Extract the result from the error - this is actually successful!
+                        if let result = nsError.userInfo["MSALInvalidResultKey"] as? MSALResult {
+                            print("✅ \(accountType) authentication actually succeeded despite error!")
+                            print("   Granted scopes: \(nsError.userInfo["MSALGrantedScopesKey"] ?? "unknown")")
+                            print("   Declined scopes: \(nsError.userInfo["MSALDeclinedScopesKey"] ?? "none")")
+                            
+                            self?.currentUser = result.account
+                            self?.isAuthenticated = true
+                            self?.errorMessage = nil
+                            
+                            print("✅ \(accountType) Microsoft sign-in successful (with scope adjustment): \(result.account.username ?? "unknown")")
+                            print("   Account ID: \(result.account.homeAccountId?.identifier ?? "unknown")")
+                            print("   Access Token received: \(result.accessToken.prefix(20))...")
+                            return
+                        }
+                    }
+                    
+                    // Check if this is a network error that we can retry
+                    let isRetryableError = (
+                        // MSAL network errors
+                        (nsError.domain == "MSALErrorDomain" && 
+                         (nsError.code == -50003 || nsError.code == -50004)) ||
+                        // URLSession network errors
+                        (nsError.domain == NSURLErrorDomain && 
+                         (nsError.code == NSURLErrorNetworkConnectionLost || 
+                          nsError.code == NSURLErrorTimedOut ||
+                          nsError.code == NSURLErrorNotConnectedToInternet))
+                    )
+                    
+                    if isRetryableError && 
+                       attempt < maxAttempts &&
+                       nsError.userInfo["MSALInvalidResultKey"] == nil { // Only retry if no result
+                        
+                        print("🔄 Retryable network error detected, retrying in 2 seconds...")
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                            self?.signInWithAuthorityAndRetry(authority: authority, accountType: accountType, attempt: attempt + 1)
+                        }
+                        return
+                    }
+                    
+                    // Provide more specific error messages
+                    var friendlyError = nsError.localizedDescription
+                    if nsError.domain == "MSALErrorDomain" {
+                        switch nsError.code {
+                        case -50003:
+                            friendlyError = "\(accountType) authentication completed with scope differences."
+                        case -50004:
+                            friendlyError = "Network timeout. Please try again."
+                        case -50005:
+                            friendlyError = "Invalid server response. Please try again."
+                        default:
+                            friendlyError = "\(accountType) authentication error (\(nsError.code)): \(nsError.localizedDescription)"
+                        }
+                    }
+                    
+                    self?.errorMessage = friendlyError
+                    return
+                }
+                
+                guard let result = result else {
+                    print("❌ No result from \(accountType) Microsoft sign-in")
+                    self?.errorMessage = "\(accountType) authentication failed - no result"
+                    return
+                }
+                
+                self?.currentUser = result.account
+                self?.isAuthenticated = true
+                
+                print("✅ \(accountType) Microsoft sign-in successful: \(result.account.username ?? "unknown")")
+                print("   Account ID: \(result.account.homeAccountId?.identifier ?? "unknown")")
+                print("   Access Token received: \(result.accessToken.prefix(20))...")
+            }
         }
     }
 }

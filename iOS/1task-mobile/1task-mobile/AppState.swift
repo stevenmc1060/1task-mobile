@@ -80,6 +80,18 @@ class AppState: ObservableObject {
         return todayTasks
     }
     
+    var completedTasksToday: Int {
+        let today = Calendar.current.startOfDay(for: Date())
+        let tomorrow = Calendar.current.date(byAdding: .day, value: 1, to: today)!
+        
+        return tasks.filter { task in
+            task.status == .completed &&
+            task.dueDate != nil &&
+            task.dueDate! >= today &&
+            task.dueDate! < tomorrow
+        }.count
+    }
+    
     var todaysHabits: [Habit] {
         let activeHabits = habits.filter { $0.status == .active }
         print("🎯 todaysHabits computed: \(activeHabits.count) from \(habits.count) total habits")
@@ -1023,6 +1035,12 @@ class AppState: ObservableObject {
     @Published var showWeeklyGoals: Bool = true
     @Published var showQuarterlyGoals: Bool = true  
     @Published var showYearlyGoals: Bool = true
+
+    // MARK: - RAG Context Generation
+    /// Generate RAG context for the chat assistant
+    func generateChatContext() -> APIService.UserProductivityContext {
+        return apiService.createRAGContext(from: self)
+    }
 
     /// Extract simple user ID from compound Microsoft account ID
     /// Microsoft returns IDs like: "2da56370-78bc-4278-9ed3-c693615ba407.e98c967d-d833-4bef-b319-9a388d2cedcd"

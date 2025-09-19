@@ -143,9 +143,16 @@ struct DashboardView: View {
             // Quick Add Button
             Button(action: { appState.showingAddSheet = true }) {
                 VStack(spacing: 6) {
-                    Image(systemName: "lightbulb.fill")
-                        .font(.title3)
-                        .foregroundColor(.white)
+                    ZStack {
+                        Image(systemName: "brain.head.profile")
+                            .font(.title3)
+                            .foregroundColor(.white)
+                        
+                        Image(systemName: "bolt.fill")
+                            .font(.caption)
+                            .foregroundColor(.yellow)
+                            .offset(x: 8, y: -4)
+                    }
                     
                     Text("Add/Ideate")
                         .font(.caption2)

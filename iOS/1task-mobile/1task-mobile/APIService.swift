@@ -572,6 +572,82 @@ class APIService: ObservableObject {
     struct ChatRequest: Codable {
         let prompt: String
         let user_id: String
+        
+        init(prompt: String, user_id: String) {
+            self.prompt = prompt
+            self.user_id = user_id
+        }
+    }
+    
+    // RAG Context Data Structure
+    struct UserProductivityContext: Codable {
+        let tasks: [TaskForRAG]
+        let habits: [HabitForRAG]
+        let goals: [GoalForRAG]
+        let projects: [ProjectForRAG]
+        let metadata: ContextMetadata
+    }
+    
+    struct TaskForRAG: Codable {
+        let id: String
+        let title: String
+        let description: String?
+        let status: String
+        let priority: String
+        let dueDate: String?
+        let projectId: String?
+        let tags: [String]
+        let createdAt: String?
+        let completedAt: String?
+    }
+    
+    struct HabitForRAG: Codable {
+        let id: String
+        let title: String
+        let description: String?
+        let frequency: String
+        let targetCount: Int
+        let currentCount: Int
+        let status: String
+        let tags: [String]
+        let streakCount: Int
+        let lastCompletedAt: String?
+    }
+    
+    struct GoalForRAG: Codable {
+        let id: String
+        let title: String
+        let description: String?
+        let category: String
+        let targetDate: String?
+        let status: String
+        let progressPercentage: Double
+        let milestones: [String]
+    }
+    
+    struct ProjectForRAG: Codable {
+        let id: String
+        let title: String
+        let description: String?
+        let status: String
+        let category: String?
+        let createdAt: String?
+        let tasksCount: Int
+        let completedTasksCount: Int
+    }
+    
+    struct ContextMetadata: Codable {
+        let totalTasks: Int
+        let completedTasks: Int
+        let overdueTasks: Int
+        let totalHabits: Int
+        let activeHabits: Int
+        let totalGoals: Int
+        let activeGoals: Int
+        let totalProjects: Int
+        let activeProjects: Int
+        let contextGeneratedAt: String
+        let userTimezone: String
     }
     
     struct ChatResponse: Codable {
@@ -582,23 +658,92 @@ class APIService: ObservableObject {
         let current_question: Int?
     }
     
-    func sendChatMessage(_ message: String) -> AnyPublisher<ChatResponse, APIError> {
-        let chatRequest = ChatRequest(prompt: message, user_id: currentUserId)
-        
-        guard let data = try? JSONEncoder().encode(chatRequest),
-              let url = URL(string: "\(AppConfiguration.API.chatAPIURL)/chat") else {
+    func sendChatMessage(_ message: String, withRAGContext context: UserProductivityContext? = nil) -> AnyPublisher<ChatResponse, APIError> {
+        // Use the separate chat API URL, not the main data API
+        guard let chatURL = URL(string: "\(AppConfiguration.API.chatAPIURL)/chat") else {
             return Fail(error: APIError.invalidURL)
                 .eraseToAnyPublisher()
         }
         
-        print("🔄 Sending chat request to: \(url)")
-        print("🔄 Chat request payload: \(String(data: data, encoding: .utf8) ?? "invalid")")
+        print("🔄 Sending chat request to CHAT API: \(chatURL)")
+        print("📊 Main data API: \(AppConfiguration.API.baseURL)")
+        
+        // If no context provided, fetch fresh data from the main API first
+        if context == nil {
+            print("📡 No RAG context provided - fetching fresh data from main API first...")
+            return fetchFreshRAGContext()
+                .flatMap { freshContext in
+                    return self.sendChatMessageWithContext(message, context: freshContext, url: chatURL)
+                }
+                .eraseToAnyPublisher()
+        } else {
+            print("🧠 Using provided RAG context")
+            return sendChatMessageWithContext(message, context: context, url: chatURL)
+        }
+    }
+    
+    private func sendChatMessageWithContext(_ message: String, context: UserProductivityContext?, url: URL) -> AnyPublisher<ChatResponse, APIError> {
+        // Build a comprehensive prompt with RAG context injected directly into the text
+        var enhancedPrompt = message
+        
+        if let context = context {
+            // Build context summary similar to how web frontends do it
+            let contextSummary = buildContextSummary(context: context)
+            
+            enhancedPrompt = """
+            You are a productivity assistant with access to the user's current productivity data. Use this data to provide specific, helpful answers about their tasks, habits, goals, and projects.
+
+            CURRENT USER DATA:
+            \(contextSummary)
+
+            USER QUESTION: \(message)
+
+            Please provide a helpful response using the specific data above. Reference actual task names, project titles, goal details, and habit information from the provided context.
+            """
+        }
+        
+        let chatRequest = ChatRequest(prompt: enhancedPrompt, user_id: currentUserId)
+        
+        guard let data = try? JSONEncoder().encode(chatRequest) else {
+            return Fail(error: APIError.invalidURL)
+                .eraseToAnyPublisher()
+        }
+        
+        if let context = context {
+            print("🧠 Including RAG context with \(context.tasks.count) tasks, \(context.habits.count) habits, \(context.goals.count) goals, \(context.projects.count) projects")
+            
+            // Debug: Show sample of what's being sent
+            if !context.tasks.isEmpty {
+                print("📋 Sample task data being sent:")
+                for task in context.tasks.prefix(2) {
+                    print("  - \(task.title) (status: \(task.status), due: \(task.dueDate ?? "none"))")
+                }
+            }
+            
+            // Show total context size  
+            print("📊 RAG context injected into prompt:")
+            print("  • Tasks: \(context.tasks.count)")
+            print("  • Habits: \(context.habits.count)")
+            print("  • Goals: \(context.goals.count)")
+            print("  • Projects: \(context.projects.count)")
+        } else {
+            print("⚠️ No RAG context being sent to chat API!")
+        }
+        
+        // Print the full JSON payload for debugging
+        let jsonString = String(data: data, encoding: .utf8) ?? "invalid JSON"
+        print("🔄 Full chat request JSON payload to CHAT API:")
+        print(jsonString)
         
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("true", forHTTPHeaderField: "X-Use-RAG-Context")
+        request.setValue("MANDATORY", forHTTPHeaderField: "X-Context-Required")
+        request.setValue("RAG-ENABLED", forHTTPHeaderField: "X-Chat-Mode")
+        request.setValue("mobile-app", forHTTPHeaderField: "X-Client-Source")
         request.httpBody = data
-        request.timeoutInterval = 30.0
+        request.timeoutInterval = 45.0 // Increased timeout for RAG processing
         
         return Future { promise in
             URLSession.shared.dataTask(with: request) { [message] data, response, error in
@@ -693,6 +838,312 @@ class APIService: ObservableObject {
             }.resume()
         }
         .eraseToAnyPublisher()
+    }
+    
+    // MARK: - RAG Context Generation
+    
+    func createRAGContext(from appState: AppState) -> UserProductivityContext {
+        let dateFormatter = ISO8601DateFormatter()
+        
+        // Convert tasks to RAG format
+        let ragTasks = appState.tasks.map { task in
+            TaskForRAG(
+                id: task.id,
+                title: task.title,
+                description: task.description,
+                status: task.status.rawValue,
+                priority: task.priority.rawValue,
+                dueDate: task.dueDate.map { dateFormatter.string(from: $0) },
+                projectId: task.projectId,
+                tags: task.tags,
+                createdAt: task.createdAt.map { dateFormatter.string(from: $0) },
+                completedAt: task.completedAt.map { dateFormatter.string(from: $0) }
+            )
+        }
+        
+        // Convert habits to RAG format
+        let ragHabits = appState.habits.map { habit in
+            HabitForRAG(
+                id: habit.id,
+                title: habit.title,
+                description: habit.description,
+                frequency: habit.frequency.rawValue,
+                targetCount: habit.targetCount,
+                currentCount: habit.currentCount,
+                status: habit.status.rawValue,
+                tags: habit.tags,
+                streakCount: habit.currentStreak, // Use currentStreak instead of streakCount
+                lastCompletedAt: habit.lastCompletedAt.map { dateFormatter.string(from: $0) }
+            )
+        }
+        
+        // Convert goals to RAG format
+        let ragGoals = appState.goals.map { goal in
+            GoalForRAG(
+                id: goal.id,
+                title: goal.title,
+                description: goal.description,
+                category: goal.goalType.rawValue, // Use goalType instead of category
+                targetDate: nil, // Goals don't have targetDate, use endDate or other field if needed
+                status: goal.status.rawValue,
+                progressPercentage: goal.progressPercentage,
+                milestones: goal.keyMetrics // Use keyMetrics instead of milestones
+            )
+        }
+        
+        // Convert projects to RAG format
+        let ragProjects = appState.projects.map { project in
+            let projectTasks = appState.tasks.filter { $0.projectId == project.id }
+            let completedProjectTasks = projectTasks.filter { $0.status == .completed }
+            
+            return ProjectForRAG(
+                id: project.id,
+                title: project.title,
+                description: project.description,
+                status: project.status.rawValue,
+                category: nil, // Projects don't have a category field
+                createdAt: project.createdAt.map { dateFormatter.string(from: $0) },
+                tasksCount: projectTasks.count,
+                completedTasksCount: completedProjectTasks.count
+            )
+        }
+        
+        // Calculate metadata
+        let completedTasks = appState.tasks.filter { $0.status == .completed }.count
+        let overdueTasks = appState.tasks.filter { task in
+            guard let dueDate = task.dueDate, task.status != .completed else { return false }
+            return dueDate < Date()
+        }.count
+        
+        let activeHabits = appState.habits.filter { $0.status == .active }.count
+        let inProgressGoals = appState.goals.filter { $0.status == .inProgress }.count // Use inProgress instead of active
+        let activeProjects = appState.projects.filter { $0.status == .active }.count
+        
+        let metadata = ContextMetadata(
+            totalTasks: appState.tasks.count,
+            completedTasks: completedTasks,
+            overdueTasks: overdueTasks,
+            totalHabits: appState.habits.count,
+            activeHabits: activeHabits,
+            totalGoals: appState.goals.count,
+            activeGoals: inProgressGoals, // Use inProgressGoals instead of activeGoals
+            totalProjects: appState.projects.count,
+            activeProjects: activeProjects,
+            contextGeneratedAt: dateFormatter.string(from: Date()),
+            userTimezone: TimeZone.current.identifier
+        )
+        
+        return UserProductivityContext(
+            tasks: ragTasks,
+            habits: ragHabits,
+            goals: ragGoals,
+            projects: ragProjects,
+            metadata: metadata
+        )
+    }
+    
+    // MARK: - Fresh RAG Context Fetching
+    
+    private func fetchFreshRAGContext() -> AnyPublisher<UserProductivityContext, APIError> {
+        print("🔄 Fetching fresh RAG context from main data API...")
+        
+        // Fetch all data from the main API simultaneously
+        let tasksPublisher = getTasks()
+        let habitsPublisher = getHabits()
+        let yearlyGoalsPublisher = getYearlyGoals()
+        let projectsPublisher = getProjects()
+        
+        return Publishers.Zip4(tasksPublisher, habitsPublisher, yearlyGoalsPublisher, projectsPublisher)
+            .map { (tasks, habits, goals, projects) -> UserProductivityContext in
+                print("✅ Fresh data fetched: \(tasks.count) tasks, \(habits.count) habits, \(goals.count) goals, \(projects.count) projects")
+                return self.createRAGContextFromBackendData(tasks: tasks, habits: habits, goals: goals, projects: projects)
+            }
+            .eraseToAnyPublisher()
+    }
+    
+    private func createRAGContextFromBackendData(tasks: [Task], habits: [Habit], goals: [Goal], projects: [Project]) -> UserProductivityContext {
+        // Convert to RAG format with proper type conversions
+        let ragTasks = tasks.map { task in
+            TaskForRAG(
+                id: task.id,
+                title: task.title,
+                description: task.description,
+                status: task.status.rawValue,
+                priority: task.priority.rawValue,
+                dueDate: task.dueDate?.ISO8601Format(),
+                projectId: task.projectId,
+                tags: task.tags,
+                createdAt: task.createdAt?.ISO8601Format(),
+                completedAt: task.completedAt?.ISO8601Format()
+            )
+        }
+        
+        let ragHabits = habits.map { habit in
+            HabitForRAG(
+                id: habit.id,
+                title: habit.title,
+                description: habit.description ?? "",
+                frequency: habit.frequency.rawValue,
+                targetCount: habit.targetCount,
+                currentCount: habit.currentCount,
+                status: habit.status.rawValue,
+                tags: habit.tags,
+                streakCount: habit.currentStreak, // Use currentStreak from the model
+                lastCompletedAt: habit.lastCompletedAt?.ISO8601Format()
+            )
+        }
+        
+        let ragGoals = goals.map { goal in
+            GoalForRAG(
+                id: goal.id,
+                title: goal.title,
+                description: goal.description ?? "",
+                category: goal.goalType.rawValue, // Use goal type as category
+                targetDate: nil, // Goals don't have a single target date in this model
+                status: goal.status.rawValue,
+                progressPercentage: goal.progressPercentage,
+                milestones: goal.keyMetrics // Use keyMetrics as milestones
+            )
+        }
+        
+        let ragProjects = projects.map { project in
+            ProjectForRAG(
+                id: project.id,
+                title: project.title,
+                description: project.description,
+                status: project.status.rawValue,
+                category: project.priority.rawValue, // Use priority as category
+                createdAt: project.createdAt?.ISO8601Format(),
+                tasksCount: project.taskIds.count, // Use taskIds count
+                completedTasksCount: 0 // We don't have this info, so default to 0
+            )
+        }
+        
+        let completedTasks = tasks.filter { $0.status == .completed }.count
+        let overdueTasks = tasks.filter { task in
+            guard let dueDate = task.dueDate else { return false }
+            return dueDate < Date() && task.status != .completed
+        }.count
+        
+        let metadata = ContextMetadata(
+            totalTasks: tasks.count,
+            completedTasks: completedTasks,
+            overdueTasks: overdueTasks,
+            totalHabits: habits.count,
+            activeHabits: habits.filter { $0.status == .active }.count,
+            totalGoals: goals.count,
+            activeGoals: goals.filter { $0.status == .inProgress }.count,
+            totalProjects: projects.count,
+            activeProjects: projects.filter { $0.status == .active }.count,
+            contextGeneratedAt: ISO8601DateFormatter().string(from: Date()),
+            userTimezone: TimeZone.current.identifier
+        )
+        
+        return UserProductivityContext(
+            tasks: ragTasks,
+            habits: ragHabits,
+            goals: ragGoals,
+            projects: ragProjects,
+            metadata: metadata
+        )
+    }
+    
+    // MARK: - RAG Context Formatting (Web Frontend Style)
+    
+    private func buildContextSummary(context: UserProductivityContext) -> String {
+        var summary = ""
+        
+        // Tasks Section
+        if !context.tasks.isEmpty {
+            summary += "TASKS (\(context.tasks.count) total):\n"
+            
+            // Group tasks by status
+            let pendingTasks = context.tasks.filter { $0.status == "pending" }
+            let inProgressTasks = context.tasks.filter { $0.status == "in_progress" }
+            let completedTasks = context.tasks.filter { $0.status == "completed" }
+            
+            if !pendingTasks.isEmpty {
+                summary += "• Pending Tasks (\(pendingTasks.count)):\n"
+                for task in pendingTasks.prefix(5) {
+                    let dueInfo = task.dueDate != nil ? " (due: \(task.dueDate!))" : ""
+                    summary += "  - \(task.title) [Priority: \(task.priority)]\(dueInfo)\n"
+                }
+                if pendingTasks.count > 5 {
+                    summary += "  ... and \(pendingTasks.count - 5) more pending tasks\n"
+                }
+            }
+            
+            if !inProgressTasks.isEmpty {
+                summary += "• In Progress (\(inProgressTasks.count)):\n"
+                for task in inProgressTasks.prefix(3) {
+                    summary += "  - \(task.title)\n"
+                }
+                if inProgressTasks.count > 3 {
+                    summary += "  ... and \(inProgressTasks.count - 3) more in progress\n"
+                }
+            }
+            
+            if !completedTasks.isEmpty {
+                summary += "• Recently Completed (\(completedTasks.count)): \(completedTasks.prefix(3).map(\.title).joined(separator: ", "))\n"
+            }
+            summary += "\n"
+        }
+        
+        // Projects Section
+        if !context.projects.isEmpty {
+            summary += "PROJECTS (\(context.projects.count) total):\n"
+            for project in context.projects.prefix(5) {
+                let tasksInfo = project.tasksCount > 0 ? " (\(project.completedTasksCount)/\(project.tasksCount) tasks complete)" : ""
+                summary += "• \(project.title) [Status: \(project.status)]\(tasksInfo)\n"
+                if let description = project.description, !description.isEmpty {
+                    summary += "  Description: \(description)\n"
+                }
+            }
+            if context.projects.count > 5 {
+                summary += "... and \(context.projects.count - 5) more projects\n"
+            }
+            summary += "\n"
+        }
+        
+        // Goals Section
+        if !context.goals.isEmpty {
+            summary += "GOALS (\(context.goals.count) total):\n"
+            for goal in context.goals.prefix(5) {
+                let progressInfo = goal.progressPercentage > 0 ? " (\(Int(goal.progressPercentage))% complete)" : ""
+                summary += "• \(goal.title) [Status: \(goal.status)]\(progressInfo)\n"
+                if let description = goal.description, !description.isEmpty {
+                    summary += "  \(description)\n"
+                }
+            }
+            if context.goals.count > 5 {
+                summary += "... and \(context.goals.count - 5) more goals\n"
+            }
+            summary += "\n"
+        }
+        
+        // Habits Section
+        if !context.habits.isEmpty {
+            summary += "HABITS (\(context.habits.count) total):\n"
+            for habit in context.habits.prefix(5) {
+                let progressInfo = "\(habit.currentCount)/\(habit.targetCount)"
+                let streakInfo = habit.streakCount > 0 ? " (streak: \(habit.streakCount))" : ""
+                summary += "• \(habit.title) [Progress: \(progressInfo)]\(streakInfo)\n"
+            }
+            if context.habits.count > 5 {
+                summary += "... and \(context.habits.count - 5) more habits\n"
+            }
+            summary += "\n"
+        }
+        
+        // Summary Stats
+        summary += "SUMMARY:\n"
+        summary += "• Total Tasks: \(context.metadata.totalTasks) (\(context.metadata.completedTasks) completed, \(context.metadata.overdueTasks) overdue)\n"
+        summary += "• Active Projects: \(context.metadata.activeProjects)/\(context.metadata.totalProjects)\n"
+        summary += "• Active Goals: \(context.metadata.activeGoals)/\(context.metadata.totalGoals)\n"
+        summary += "• Active Habits: \(context.metadata.activeHabits)/\(context.metadata.totalHabits)\n"
+        summary += "• Context generated: \(context.metadata.contextGeneratedAt)\n"
+        
+        return summary
     }
 }
 

@@ -19,7 +19,7 @@ struct _task_mobileApp: App {
                     SplashScreenView()
                         .environmentObject(appState)
                 } else if !appState.isLoggedIn {
-                    ContentView()
+                    LoginView()
                         .environmentObject(appState)
                         .onAppear {
                             // Debug: Log app state when login screen appears

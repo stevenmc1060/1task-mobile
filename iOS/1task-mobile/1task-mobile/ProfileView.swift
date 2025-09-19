@@ -90,8 +90,8 @@ struct ProfileView: View {
             
             LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 2), spacing: 16) {
                 StatCard(
-                    title: "Tasks Completed",
-                    value: "\(appState.todaysTasks.filter { $0.status == .completed }.count)",
+                    title: "Tasks Completed Today",
+                    value: "\(appState.completedTasksToday)",
                     icon: "checkmark.circle.fill",
                     color: .blue
                 )
