@@ -54,6 +54,7 @@ struct AddGoalView: View {
     @Environment(\.presentationMode) var presentationMode
     @State private var title: String = ""
     @State private var description: String = ""
+    @State private var goalType: GoalType = .quarterly
     @State private var deadline: Date = {
         Calendar.current.date(byAdding: .month, value: 1, to: Date()) ?? Date()
     }()
@@ -66,7 +67,19 @@ struct AddGoalView: View {
                     
                     TextField("Description (optional)", text: $description)
                     
-                    DatePicker("Target deadline", selection: $deadline, displayedComponents: .date)
+                    Picker("Goal Type", selection: $goalType) {
+                        ForEach(GoalType.allCases, id: \.self) { type in
+                            HStack {
+                                Image(systemName: type.icon)
+                                    .foregroundColor(type.color)
+                                Text(type.rawValue)
+                            }
+                            .tag(type)
+                        }
+                    }
+                    .pickerStyle(MenuPickerStyle())
+                    
+                    DatePicker(deadlineLabel, selection: $deadline, displayedComponents: .date)
                 }
             }
             .navigationTitle("New Goal")
@@ -76,17 +89,59 @@ struct AddGoalView: View {
                     presentationMode.wrappedValue.dismiss()
                 },
                 trailing: Button("Add") {
-                    let newGoal = Goal(
-                        title: title,
-                        description: description.isEmpty ? nil : description,
-                        weekStartDate: deadline
-                    )
+                    let newGoal = createGoalFromInputs()
                     appState.addGoal(newGoal)
                     presentationMode.wrappedValue.dismiss()
                 }
                 .disabled(title.isEmpty)
             )
         }
+    }
+    
+    private var deadlineLabel: String {
+        switch goalType {
+        case .weekly:
+            return "Week start date"
+        case .quarterly:
+            return "Target deadline"
+        case .yearly:
+            return "Target deadline"
+        }
+    }
+    
+    private func createGoalFromInputs() -> Goal {
+        let calendar = Calendar.current
+        
+        switch goalType {
+        case .weekly:
+            return Goal(
+                title: title,
+                description: description.isEmpty ? nil : description,
+                weekStartDate: deadline
+            )
+        case .quarterly:
+            let quarter = calendar.quarter(from: deadline)
+            return Goal(
+                title: title,
+                description: description.isEmpty ? nil : description,
+                targetQuarter: quarter
+            )
+        case .yearly:
+            let year = calendar.component(.year, from: deadline)
+            return Goal(
+                title: title,
+                description: description.isEmpty ? nil : description,
+                targetYear: year
+            )
+        }
+    }
+}
+
+// MARK: - Calendar Extension
+extension Calendar {
+    func quarter(from date: Date) -> Int {
+        let month = self.component(.month, from: date)
+        return (month - 1) / 3 + 1
     }
 }
 

@@ -119,14 +119,14 @@ struct UpdateHabitRequest: Codable {
 struct CreateYearlyGoalRequest: Codable {
     let title: String
     let description: String?
-    let weekStartDate: String?
+    let targetYear: Int
     let keyMetrics: [String]
     let userId: String
     
     enum CodingKeys: String, CodingKey {
         case title
         case description
-        case weekStartDate = "week_start_date"
+        case targetYear = "target_year"
         case keyMetrics = "key_metrics"
         case userId = "user_id"
     }
@@ -191,6 +191,44 @@ struct UpdateProjectRequest: Codable {
         case endDate = "end_date"
         case tags
         case progressPercentage = "progress_percentage"
+    }
+}
+
+struct CreateWeeklyGoalRequest: Codable {
+    let title: String
+    let description: String?
+    let weekStartDate: String
+    let keyMetrics: [String]
+    let userId: String
+    let quarterlyGoalId: String?
+    
+    enum CodingKeys: String, CodingKey {
+        case title
+        case description
+        case weekStartDate = "week_start_date"
+        case keyMetrics = "key_metrics"
+        case userId = "user_id"
+        case quarterlyGoalId = "quarterly_goal_id"
+    }
+}
+
+struct CreateQuarterlyGoalRequest: Codable {
+    let title: String
+    let description: String?
+    let targetQuarter: Int
+    let targetYear: Int
+    let keyMetrics: [String]
+    let userId: String
+    let yearlyGoalId: String?
+    
+    enum CodingKeys: String, CodingKey {
+        case title
+        case description
+        case targetQuarter = "target_quarter"
+        case targetYear = "target_year"
+        case keyMetrics = "key_metrics"
+        case userId = "user_id"
+        case yearlyGoalId = "yearly_goal_id"
     }
 }
 
@@ -417,7 +455,7 @@ class APIService: ObservableObject {
         let createRequest = CreateYearlyGoalRequest(
             title: goal.title,
             description: goal.description,
-            weekStartDate: goal.weekStartDate.map { dateFormatter.string(from: $0) },
+            targetYear: goal.targetYear ?? Calendar.current.component(.year, from: Date()),
             keyMetrics: goal.keyMetrics,
             userId: currentUserId
         )
@@ -474,6 +512,31 @@ class APIService: ObservableObject {
         return performRequest(request, responseType: [Goal].self)
     }
     
+    func createWeeklyGoal(_ goal: Goal) -> AnyPublisher<Goal, APIError> {
+        print("🔵 Creating weekly goal: \(goal.title)")
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "yyyy-MM-dd"
+        let createRequest = CreateWeeklyGoalRequest(
+            title: goal.title,
+            description: goal.description,
+            weekStartDate: dateFormatter.string(from: goal.weekStartDate ?? Date()),
+            keyMetrics: goal.keyMetrics,
+            userId: currentUserId,
+            quarterlyGoalId: goal.quarterlyGoalId
+        )
+        
+        print("🔵 Weekly goal request: \(createRequest)")
+        
+        guard let data = try? JSONEncoder().encode(createRequest),
+              let request = makeRequest(endpoint: "weekly-goals", method: "POST", body: data) else {
+            print("❌ Failed to create weekly goal request")
+            return Fail(error: APIError.invalidURL).eraseToAnyPublisher()
+        }
+        
+        print("🔵 Sending weekly goal to: \(request.url?.absoluteString ?? "unknown")")
+        return performRequest(request, responseType: Goal.self)
+    }
+    
     // MARK: - Quarterly Goals API
     func getQuarterlyGoals() -> AnyPublisher<[Goal], APIError> {
         guard let request = makeRequest(endpoint: "quarterly-goals?user_id=\(currentUserId)") else {
@@ -482,7 +545,31 @@ class APIService: ObservableObject {
         
         return performRequest(request, responseType: [Goal].self)
     }
-
+    
+    func createQuarterlyGoal(_ goal: Goal) -> AnyPublisher<Goal, APIError> {
+        print("🟠 Creating quarterly goal: \(goal.title)")
+        let createRequest = CreateQuarterlyGoalRequest(
+            title: goal.title,
+            description: goal.description,
+            targetQuarter: goal.targetQuarter ?? 1,
+            targetYear: goal.targetYear ?? Calendar.current.component(.year, from: Date()),
+            keyMetrics: goal.keyMetrics,
+            userId: currentUserId,
+            yearlyGoalId: goal.yearlyGoalId
+        )
+        
+        print("🟠 Quarterly goal request: \(createRequest)")
+        
+        guard let data = try? JSONEncoder().encode(createRequest),
+              let request = makeRequest(endpoint: "quarterly-goals", method: "POST", body: data) else {
+            print("❌ Failed to create quarterly goal request")
+            return Fail(error: APIError.invalidURL).eraseToAnyPublisher()
+        }
+        
+        print("🟠 Sending quarterly goal to: \(request.url?.absoluteString ?? "unknown")")
+        return performRequest(request, responseType: Goal.self)
+    }
+    
     // MARK: - Projects API
     func getProjects() -> AnyPublisher<[Project], APIError> {
         guard let request = makeRequest(endpoint: "projects?user_id=\(currentUserId)") else {

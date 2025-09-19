@@ -717,11 +717,13 @@ struct ChatMessageView: View {
                                     .foregroundColor(.white)
                             )
                         
-                        Text(message.content)
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 10)
-                            .background(Color(.systemGray5))
-                            .cornerRadius(18)
+                        VStack(alignment: .leading, spacing: 0) {
+                            FormattedMarkdownText(content: message.content)
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 12)
+                        .background(Color(.systemGray5))
+                        .cornerRadius(18)
                     }
                     
                     Text(formatTime(message.timestamp))
@@ -740,6 +742,152 @@ struct ChatMessageView: View {
         formatter.timeStyle = .short
         return formatter.string(from: date)
     }
+}
+
+// Custom formatted markdown text view for better readability
+struct FormattedMarkdownText: View {
+    let content: String
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(formattedParagraphs, id: \.id) { paragraph in
+                paragraph.view
+            }
+        }
+        .textSelection(.enabled)
+    }
+    
+    private var formattedParagraphs: [FormattedParagraph] {
+        let lines = content.components(separatedBy: .newlines)
+        var paragraphs: [FormattedParagraph] = []
+        var currentParagraph: [String] = []
+        
+        for line in lines {
+            let trimmedLine = line.trimmingCharacters(in: .whitespaces)
+            
+            if trimmedLine.isEmpty {
+                // Empty line - finish current paragraph if it has content
+                if !currentParagraph.isEmpty {
+                    paragraphs.append(FormattedParagraph(
+                        id: UUID(),
+                        content: currentParagraph.joined(separator: "\n"),
+                        type: .text
+                    ))
+                    currentParagraph = []
+                }
+            } else if trimmedLine.hasPrefix("# ") {
+                // Heading
+                finishCurrentParagraph(&paragraphs, &currentParagraph)
+                paragraphs.append(FormattedParagraph(
+                    id: UUID(),
+                    content: String(trimmedLine.dropFirst(2)),
+                    type: .heading
+                ))
+            } else if trimmedLine.hasPrefix("## ") {
+                // Subheading
+                finishCurrentParagraph(&paragraphs, &currentParagraph)
+                paragraphs.append(FormattedParagraph(
+                    id: UUID(),
+                    content: String(trimmedLine.dropFirst(3)),
+                    type: .subheading
+                ))
+            } else if trimmedLine.hasPrefix("- ") || trimmedLine.hasPrefix("• ") || trimmedLine.hasPrefix("* ") {
+                // Bullet point
+                finishCurrentParagraph(&paragraphs, &currentParagraph)
+                paragraphs.append(FormattedParagraph(
+                    id: UUID(),
+                    content: String(trimmedLine.dropFirst(2)),
+                    type: .bullet
+                ))
+            } else if trimmedLine.contains(": ") && currentParagraph.isEmpty {
+                // Key-value pair (like "Tasks: 5")
+                paragraphs.append(FormattedParagraph(
+                    id: UUID(),
+                    content: trimmedLine,
+                    type: .keyValue
+                ))
+            } else {
+                // Regular text
+                currentParagraph.append(line)
+            }
+        }
+        
+        // Don't forget the last paragraph
+        finishCurrentParagraph(&paragraphs, &currentParagraph)
+        
+        return paragraphs
+    }
+    
+    private func finishCurrentParagraph(_ paragraphs: inout [FormattedParagraph], _ currentParagraph: inout [String]) {
+        if !currentParagraph.isEmpty {
+            paragraphs.append(FormattedParagraph(
+                id: UUID(),
+                content: currentParagraph.joined(separator: "\n"),
+                type: .text
+            ))
+            currentParagraph = []
+        }
+    }
+}
+
+struct FormattedParagraph {
+    let id: UUID
+    let content: String
+    let type: ParagraphType
+    
+    var view: some View {
+        Group {
+            switch type {
+            case .heading:
+                Text(content)
+                    .font(.headline)
+                    .fontWeight(.bold)
+                    .foregroundColor(.primary)
+                    .padding(.vertical, 4)
+                
+            case .subheading:
+                Text(content)
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                    .foregroundColor(.primary)
+                    .padding(.vertical, 2)
+                
+            case .bullet:
+                HStack(alignment: .top, spacing: 8) {
+                    Text("•")
+                        .font(.body)
+                        .foregroundColor(.secondary)
+                        .padding(.top, 1)
+                    
+                    Text(try! AttributedString(markdown: content))
+                        .font(.body)
+                        .multilineTextAlignment(.leading)
+                }
+                .padding(.leading, 8)
+                
+            case .keyValue:
+                Text(try! AttributedString(markdown: content))
+                    .font(.body)
+                    .fontWeight(.medium)
+                    .padding(.vertical, 1)
+                
+            case .text:
+                Text(try! AttributedString(markdown: content))
+                    .font(.body)
+                    .multilineTextAlignment(.leading)
+                    .lineSpacing(2)
+                    .padding(.vertical, 2)
+            }
+        }
+    }
+}
+
+enum ParagraphType {
+    case heading
+    case subheading
+    case bullet
+    case keyValue
+    case text
 }
 
 // Extension to add corner radius to specific corners

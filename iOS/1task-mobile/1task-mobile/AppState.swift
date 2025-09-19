@@ -679,15 +679,36 @@ class AppState: ObservableObject {
     }
     
     func addGoal(_ goal: Goal) {
-        apiService.createYearlyGoal(goal)
+        print("🎯 Adding goal: \(goal.title)")
+        print("🆔 User ID: \(apiService.currentUserId)")
+        print("📊 Goal details: \(goal)")
+        print("🎯 Goal type: \(goal.goalType)")
+        
+        let createPublisher: AnyPublisher<Goal, APIError>
+        
+        switch goal.goalType {
+        case .weekly:
+            createPublisher = apiService.createWeeklyGoal(goal)
+        case .quarterly:
+            createPublisher = apiService.createQuarterlyGoal(goal)
+        case .yearly:
+            createPublisher = apiService.createYearlyGoal(goal)
+        }
+        
+        createPublisher
             .receive(on: DispatchQueue.main)
             .sink(
                 receiveCompletion: { [weak self] completion in
-                    if case .failure(let error) = completion {
+                    switch completion {
+                    case .failure(let error):
+                        print("❌ Failed to add \(goal.goalType.rawValue) goal: \(error)")
                         self?.handleError(error)
+                    case .finished:
+                        print("✅ \(goal.goalType.rawValue) goal add request completed")
                     }
                 },
                 receiveValue: { [weak self] newGoal in
+                    print("🎉 Successfully added \(newGoal.goalType.rawValue) goal: \(newGoal.title) with ID: \(newGoal.id)")
                     self?.goals.append(newGoal)
                 }
             )
